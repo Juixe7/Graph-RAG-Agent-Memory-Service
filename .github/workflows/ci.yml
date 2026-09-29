@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Node 18/20 are off the matrix — the floor is now 22.5
+        # (sdk/embeddings.js uses node:sqlite, built in starting there);
+        # 24.x is the other actively supported line.
+        node-version: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Run test suite (zero dependencies — no install step needed)
+        run: npm test
+      - name: Sanity-check every module parses (syntax check)
+        run: |
+          for f in $(find api sdk mcp -name '*.js'); do
+            node --check "$f"
+          done

@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧠 Second Brain Visualizer</title>
+  <!-- Modern Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(15, 23, 42, 0.65);
+      --border-card: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      
+      /* Types colors */
+      --color-core: #6366f1;     /* indigo */
+      --color-memory: #10b981;   /* emerald */
+      --color-research: #3b82f6; /* blue */
+      --color-decision: #f59e0b; /* amber */
+      --color-task: #ec4899;     /* pink */
+      --color-insight: #8b5cf6;  /* violet */
+      --color-note: #64748b;     /* slate */
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header Bar */
+    header {
+      background: rgba(10, 15, 28, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-card);
+      padding: 1rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .header-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .header-logo h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #a5b4fc, #6366f1, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.35rem 0.75rem;
+      border-radius: 100px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #ef4444; /* offline default */
+      box-shadow: 0 0 8px #ef4444;
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.online {
+      background-color: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    /* Main Workspace */
+    .workspace {
+      flex: 1;
+      display: flex;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Top-level view tabs (Graph / Org Chart). The graph visualizer above
+       is the original single view; these tabs just add a sibling pane
+       alongside it without touching its own markup or script. */
+    .view-tabs {
+      display: flex;
+      gap: 0.25rem;
+      padding: 0 1.5rem;
+      background: rgba(10, 15, 28, 0.6);
+      border-bottom: 1px solid var(--border-card);
+    }
+    .view-tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 0.6rem 0.9rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .view-tab-btn:hover { color: var(--text-main); }
+    .view-tab-btn.active {
+      color: var(--text-main);
+      border-bottom-color: #a78bfa;
+    }
+    .view-pane { display: none; height: 100%; min-height: 0; flex: 1; flex-direction: column; }
+    .view-pane.active { display: flex; }
+    .org-chart-pane {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.25rem 1.5rem;
+    }
+    .org-dept-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      padding: 0.9rem 1.1rem;
+      margin-bottom: 0.75rem;
+      max-width: 640px;
+    }
+
+    /* Left Sidebar: Controls & Search */
+    .control-panel {
+      width: 320px;
+      background: rgba(10, 15, 28, 0.5);
+      border-right: 1px solid var(--border-card);
+      backdrop-filter: blur(16px);
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      z-index: 5;
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .panel-section h3 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Inputs */
+    .input-wrapper {
+      position: relative;
+    }
+
+    input[type="text"], input[type="password"], textarea, select {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 0.65rem 0.85rem;
+      border-radius: 8px;
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--color-core);
+      background: rgba(255, 255, 255, 0.07);
+      box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+    }
+
+    .btn {
+      background: var(--color-core);
+      color: white;
+      border: none;
+      padding: 0.65rem 1rem;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn:hover {
+      background: #4f46e5;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      box-shadow: none;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .stat-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 0.75rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--color-core);
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    /* Types Legend */
+    .legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+    }
+
+    .legend-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    /* Graph Container */
+    .graph-container {
+      flex: 1;
+      height: 100%;
+      position: relative;
+      background: radial-gradient(circle at center, #0f172a 0%, #090d16 100%);
+    }
+
+    svg.graph-svg {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    svg.graph-svg:active {
+      cursor: grabbing;
+    }
+
+    .link {
+      stroke: rgba(255, 255, 255, 0.15);
+      stroke-opacity: 0.6;
+      stroke-width: 1.5px;
+      transition: stroke 0.2s, stroke-width 0.2s;
+    }
+
+    .link.highlighted {
+      stroke: rgba(255, 255, 255, 0.7);
+      stroke-width: 2.5px;
+    }
+
+    .node {
+      cursor: pointer;
+      transition: filter 0.3s;
+    }
+
+    .node:hover {
+      filter: drop-shadow(0 0 8px currentColor);
+    }
+
+    .node ring {
+      stroke-width: 2px;
+      fill: none;
+    }
+
+    .node-label {
+      fill: var(--text-main);
+      font-size: 0.75rem;
+      font-weight: 500;
+      pointer-events: none;
+      text-anchor: middle;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    /* Right Sidebar: Details Reader */
+    .details-panel {
+      width: 420px;
+      background: rgba(10, 15, 28, 0.7);
+      border-left: 1px solid var(--border-card);
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      z-index: 5;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+    }
+
+    .details-panel.open {
+      transform: translateX(0);
+      position: relative;
+    }
+
+    .details-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border-card);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .details-title-area h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--text-main);
+    }
+
+    .meta-badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      margin-right: 0.5rem;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.5rem;
+      line-height: 1;
+      padding: 0.2rem;
+    }
+
+    .close-btn:hover {
+      color: white;
+    }
+
+    .details-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Markdown styling */
+    .markdown-content {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+
+    .markdown-content p {
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content h1, .markdown-content h2, .markdown-content h3 {
+      color: white;
+      margin: 1.5rem 0 0.75rem 0;
+      font-weight: 600;
+    }
+
+    .markdown-content h1 { font-size: 1.4rem; border-bottom: 1px solid var(--border-card); padding-bottom: 0.3rem; }
+    .markdown-content h2 { font-size: 1.2rem; }
+    .markdown-content h3 { font-size: 1.05rem; }
+
+    .markdown-content ul, .markdown-content ol {
+      margin-bottom: 1rem;
+      padding-left: 1.25rem;
+    }
+
+    .markdown-content li {
+      margin-bottom: 0.35rem;
+    }
+
+    .markdown-content code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 0.15rem 0.3rem;
+      border-radius: 4px;
+    }
+
+    .markdown-content pre {
+      background: rgba(0, 0, 0, 0.4);
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .markdown-content pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .markdown-content blockquote {
+      border-left: 3px solid var(--color-core);
+      padding-left: 1rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      font-style: italic;
+    }
+
+    .markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content th, .markdown-content td {
+      border: 1px solid var(--border-card);
+      padding: 0.5rem;
+      text-align: left;
+    }
+
+    .markdown-content th {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* Details lists */
+    .links-section {
+      border-top: 1px solid var(--border-card);
+      padding-top: 1.5rem;
+    }
+
+    .links-section h4 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .node-links-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .link-badge {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .link-badge:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--color-core);
+    }
+
+    .link-badge-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .link-badge-title {
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .tag-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
+
+    .tag-pill {
+      font-size: 0.75rem;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 0.15rem 0.5rem;
+      border-radius: 100px;
+      color: var(--text-muted);
+    }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border-card);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    /* Floating control buttons inside graph */
+    .graph-controls {
+      position: absolute;
+      bottom: 1.5rem;
+      left: 1.5rem;
+      display: flex;
+      gap: 0.5rem;
+      z-index: 2;
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Live Diagnostics Telemetry Feed */
+    .live-feed-panel {
+      position: absolute;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      width: 340px;
+      max-height: 250px;
+      background: rgba(10, 15, 28, 0.75);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      backdrop-filter: blur(12px);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      z-index: 2;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: opacity 0.3s;
+    }
+
+    .live-feed-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 0.35rem;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .live-feed-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .feed-item {
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.02);
+      border-left: 3px solid var(--color-core);
+      animation: fadeIn 0.3s ease;
+      line-height: 1.4;
+    }
+
+    .feed-item.recall { border-left-color: var(--color-research); }
+    .feed-item.remember { border-left-color: var(--color-memory); }
+    .feed-item.update { border-left-color: var(--color-decision); }
+    .feed-item.delete { border-left-color: #ef4444; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 2rem;
+      gap: 1rem;
+    }
+
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      stroke: var(--text-muted);
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-logo">
+      <span>🧠</span>
+      <h1>Second Brain Visualizer</h1>
+    </div>
+    
+    <div class="connection-status">
+      <div id="status-dot" class="status-dot"></div>
+      <span id="status-text">Connecting...</span>
+    </div>
+  </header>
+
+  <!-- View tabs: the original D3 graph visualizer, plus a new Org Chart
+       view. The graph tab's own markup/behavior below is unchanged. -->
+  <div class="view-tabs">
+    <button class="view-tab-btn active" data-view="graph">Graph</button>
+    <button class="view-tab-btn" data-view="orgchart">Org Chart</button>
+  </div>
+
+  <!-- Main Workspace -->
+  <div class="workspace view-pane active" id="view-pane-graph">
+
+    <!-- Left Sidebar -->
+    <div class="control-panel">
+      <!-- Search Section -->
+      <div class="panel-section">
+        <h3>Search</h3>
+        <div class="input-wrapper">
+          <input type="text" id="search-input" placeholder="Search title, content, tags...">
+        </div>
+      </div>
+      
+      <!-- API Settings -->
+      <div class="panel-section">
+        <h3>API Connection</h3>
+        <div class="input-wrapper" style="margin-bottom: 0.5rem;">
+          <input type="text" id="api-url" value="http://localhost:3747" placeholder="http://localhost:3747">
+        </div>
+        <div class="input-wrapper">
+          <input type="password" id="api-key" placeholder="API Key (BRAIN_KEY if set)">
+        </div>
+        <button id="btn-reconnect" class="btn" style="margin-top: 0.25rem;">Update API</button>
+      </div>
+
+      <!-- Controls -->
+      <div class="panel-section">
+        <h3>Controls</h3>
+        <button id="btn-reload" class="btn btn-secondary">
+          🔄 Sync Vault Reload
+        </button>
+      </div>
+
+      <!-- Agent Simulator -->
+      <div class="panel-section">
+        <h3>Agent Simulator</h3>
+        <div style="display:flex; flex-direction:column; gap:0.5rem; background:rgba(255,255,255,0.02); padding:0.75rem; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+          <div class="input-wrapper">
+            <input type="text" id="sim-title" placeholder="Memory Title...">
+          </div>
+          <div class="input-wrapper">
+            <select id="sim-type" style="width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); padding:0.65rem 0.85rem; border-radius:8px; color:var(--text-main); font-family:inherit; font-size:0.9rem;">
+              <option value="memory" style="background:var(--bg-dark);">Memory</option>
+              <option value="research" style="background:var(--bg-dark);">Research</option>
+              <option value="decision" style="background:var(--bg-dark);">Decision</option>
+              <option value="task" style="background:var(--bg-dark);">Task</option>
+              <option value="insight" style="background:var(--bg-dark);">Insight</option>
+              <option value="note" style="background:var(--bg-dark);">Note</option>
+            </select>
+          </div>
+          <div class="input-wrapper">
+            <input type="text" id="sim-tags" placeholder="tags (comma-separated)...">
+          </div>
+          <div class="input-wrapper">
+            <textarea id="sim-content" placeholder="Content... (use [[WikiLinks]])" rows="3" style="width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); padding:0.65rem 0.85rem; border-radius:8px; color:var(--text-main); font-family:inherit; font-size:0.9rem; resize:vertical;"></textarea>
+          </div>
+          <button id="btn-sim-commit" class="btn" style="width:100%;">🧠 Commit Memory</button>
+        </div>
+      </div>
+
+      <!-- Vault Statistics -->
+      <div class="panel-section">
+        <h3>Statistics</h3>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div id="stat-nodes" class="stat-value">-</div>
+            <div class="stat-label">Nodes</div>
+          </div>
+          <div class="stat-card">
+            <div id="stat-edges" class="stat-value">-</div>
+            <div class="stat-label">Edges</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Types Legend -->
+      <div class="panel-section">
+        <h3>Filter by Type</h3>
+        <div class="legend-list">
+          <div class="legend-item" data-type="core">
+            <div class="legend-color" style="background-color: var(--color-core);"></div>
+            <span>Core / System</span>
+          </div>
+          <div class="legend-item" data-type="memory">
+            <div class="legend-color" style="background-color: var(--color-memory);"></div>
+            <span>Memory</span>
+          </div>
+          <div class="legend-item" data-type="research">
+            <div class="legend-color" style="background-color: var(--color-research);"></div>
+            <span>Research</span>
+          </div>
+          <div class="legend-item" data-type="decision">
+            <div class="legend-color" style="background-color: var(--color-decision);"></div>
+            <span>Decision</span>
+          </div>
+          <div class="legend-item" data-type="task">
+            <div class="legend-color" style="background-color: var(--color-task);"></div>
+            <span>Task</span>
+          </div>
+          <div class="legend-item" data-type="insight">
+            <div class="legend-color" style="background-color: var(--color-insight);"></div>
+            <span>Insight</span>
+          </div>
+          <div class="legend-item" data-type="note">
+            <div class="legend-color" style="background-color: var(--color-note);"></div>
+            <span>Note</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Canvas: D3 Graph -->
+    <div class="graph-container">
+      <svg class="graph-svg"></svg>
+      
+      <!-- Graph Canvas Zoom controls -->
+      <div class="graph-controls">
+        <button id="btn-zoom-in" class="icon-btn" title="Zoom In">+</button>
+        <button id="btn-zoom-out" class="icon-btn" title="Zoom Out">-</button>
+        <button id="btn-zoom-reset" class="icon-btn" title="Reset View">⌖</button>
+      </div>
+
+      <!-- Live Telemetry Stream -->
+      <div id="live-feed-panel" class="live-feed-panel">
+        <div class="live-feed-title">
+          <span>Telemetry Stream</span>
+          <span style="font-size:0.7rem; color:#10b981; animation: pulse 1.5s infinite;">● Live</span>
+        </div>
+        <div id="live-feed-list" class="live-feed-list">
+          <div style="color:var(--text-muted); font-size:0.75rem; padding: 0.5rem; text-align:center;">Waiting for agent activities...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Sidebar: Details Reader -->
+    <div id="details-panel" class="details-panel">
+      <div class="empty-state">
+        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path>
+        </svg>
+        <p>Select a node in the graph to view its content and connections.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- View pane: Org Chart. Built with Preact+htm (see the script tags
+       below) as a real component tree — the recommended pattern for any
+       new view added to this file going forward, instead of the
+       vanilla-JS/innerHTML string concatenation used elsewhere here (e.g.
+       the graph pane's details panel, the legend, etc). This is additive:
+       the existing graph pane above is untouched. -->
+  <div class="view-pane" id="view-pane-orgchart">
+    <div class="org-chart-pane">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; max-width:640px;">
+        <div>
+          <h3 style="font-size:0.95rem; margin:0; color:var(--text-main);">Org Chart</h3>
+          <p style="font-size:0.78rem; color:var(--text-muted); margin:0.25rem 0 0;">Departments are derived from agent-persona tags/frontmatter already in the vault (GET /org-chart).</p>
+        </div>
+        <button id="btn-refresh-orgchart" class="btn btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;">Refresh</button>
+      </div>
+      <div id="org-chart-root"></div>
+    </div>
+  </div>
+
+  <!-- Hover Tooltip -->
+  <div id="tooltip" class="tooltip"></div>
+
+  <!-- Load D3.js and Marked.js Locally -->
+  <script src="d3.min.js"></script>
+  <script src="marked.min.js"></script>
+  <!-- Preact + htm: vendored locally (not a CDN) to keep the "fully
+       offline" property the other libs above already have. No JSX, no
+       build step — htm.bind(preact.h) turns a plain tagged template into
+       the same VNode tree JSX would. This is the recommended pattern for
+       any new view added to this file going forward (see the Org Chart
+       view's script below) — not a retroactive rewrite of the rest of
+       this file, which stays vanilla JS/innerHTML. -->
+  <script src="preact.min.js"></script>
+  <script src="htm.min.js"></script>
+
+  <script>
+    // Config & Connection state
+    let API_URL = localStorage.getItem('sb_api_url') || 'http://localhost:3747';
+    let API_KEY = localStorage.getItem('sb_api_key') || '';
+    
+    document.getElementById('api-url').value = API_URL;
+    document.getElementById('api-key').value = API_KEY;
+
+    let graphData = { nodes: [], edges: [] };
+    let selectedNodeId = null;
+    let selectedTypeFilter = null;
+    
+    // D3 variables
+    let svg, container, simulation, zoom;
+    let width, height;
+    let eventSource = null;
+    
+    // DOM Elements
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const detailsPanel = document.getElementById('details-panel');
+    const tooltip = document.getElementById('tooltip');
+    
+    // Set up request headers helper
+    function getHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (API_KEY) {
+        headers['Authorization'] = `Bearer ${API_KEY}`;
+      }
+      return headers;
+    }
+
+    // Ping server and load initial graph
+    async function init() {
+      setupD3();
+      await fetchGraph();
+      connectSSE();
+      // Poll connectivity status
+      setInterval(checkStatus, 5000);
+      checkStatus();
+    }
+
+    // Connect to Server-Sent Events (SSE) stream
+    function connectSSE() {
+      if (eventSource) {
+        eventSource.close();
+      }
+
+      const tokenParam = API_KEY ? `?token=${encodeURIComponent(API_KEY)}` : '';
+      eventSource = new EventSource(`${API_URL}/stream${tokenParam}`);
+
+      eventSource.addEventListener('ping', () => {
+        console.log('[sse] Telemetry stream connected.');
+      });
+
+      eventSource.addEventListener('recall', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          addTelemetryFeed('recall', `🤖 <strong>${data.agent}</strong> recalled: "${data.query}" (${data.nodes.length} nodes)`);
+          pulseNodes(data.nodes.map(n => n.id), 'var(--color-research)');
+          
+          // Draw connection path highlight
+          highlightLinkPath(data.nodes.map(n => n.id));
+        } catch (err) {
+          console.error('[sse] Failed to parse recall event:', err);
+        }
+      });
+
+      eventSource.addEventListener('remember', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          addTelemetryFeed('remember', `📝 New Memory: "<strong>${data.node.title}</strong>" by ${data.node.agent}`);
+          fetchGraph().then(() => {
+            setTimeout(() => pulseNodes([data.id], 'var(--color-memory)'), 400);
+          });
+        } catch (err) {
+          console.error('[sse] Failed to parse remember event:', err);
+        }
+      });
+
+      eventSource.addEventListener('update', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          addTelemetryFeed('update', `✏️ Updated thought: "<strong>${data.node.title}</strong>"`);
+          fetchGraph().then(() => {
+            setTimeout(() => pulseNodes([data.id], 'var(--color-decision)'), 400);
+          });
+        } catch (err) {
+          console.error('[sse] Failed to parse update event:', err);
+        }
+      });
+
+      eventSource.addEventListener('delete', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          addTelemetryFeed('delete', `🗑️ Forgotten node: "<strong>${data.title}</strong>"`);
+          fetchGraph();
+        } catch (err) {
+          console.error('[sse] Failed to parse delete event:', err);
+        }
+      });
+
+      eventSource.onerror = (err) => {
+        console.warn('[sse] Telemetry connection lost. Reconnecting in 5s...');
+        eventSource.close();
+        setTimeout(connectSSE, 5000);
+      };
+    }
+
+    // Add logging details to floating Telemetry list
+    function addTelemetryFeed(type, htmlContent) {
+      const list = document.getElementById('live-feed-list');
+      
+      // Remove empty state message if it is first item
+      if (list.children.length === 1 && list.firstChild.style.color) {
+        list.innerHTML = '';
+      }
+
+      const item = document.createElement('div');
+      item.className = `feed-item ${type}`;
+      item.innerHTML = `<span style="font-weight:600; font-family:'JetBrains Mono',monospace; opacity: 0.6; font-size:0.72rem; margin-right: 0.25rem;">[${new Date().toLocaleTimeString()}]</span> ${htmlContent}`;
+      
+      list.insertBefore(item, list.firstChild);
+      
+      // Limit list to last 5 logs
+      while (list.children.length > 5) {
+        list.removeChild(list.lastChild);
+      }
+    }
+
+    // Trigger visual pulse transitions on active nodes
+    function pulseNodes(nodeIds, colorHex) {
+      const searchSet = new Set(nodeIds);
+      
+      container.selectAll('.node-group')
+        .filter(d => searchSet.has(d.id))
+        .each(function(d) {
+          const group = d3.select(this);
+          
+          // Glow animation
+          group.selectAll('circle:first-child')
+            .transition()
+            .duration(300)
+            .attr('r', getNodeRadius(d) + 12)
+            .style('stroke-opacity', 0.8)
+            .style('stroke', colorHex)
+            .transition()
+            .duration(800)
+            .attr('r', getNodeRadius(d) + 3)
+            .style('stroke-opacity', 0.25)
+            .style('stroke', getColorForType(d.type));
+            
+          // Scale bouncing animation
+          group.selectAll('circle:nth-child(2)')
+            .transition()
+            .duration(300)
+            .attr('r', getNodeRadius(d) * 1.3)
+            .transition()
+            .duration(600)
+            .attr('r', getNodeRadius(d));
+        });
+    }
+
+    // Highlight links connecting active queries
+    function highlightLinkPath(nodeIds) {
+      if (nodeIds.length < 2) return;
+      const idsSet = new Set(nodeIds);
+      
+      container.selectAll('.link')
+        .classed('highlighted', l => 
+          idsSet.has(l.source.id || l.source) && 
+          idsSet.has(l.target.id || l.target)
+        );
+        
+      // Revert highlight after 2.5 seconds
+      setTimeout(() => {
+        container.selectAll('.link').classed('highlighted', false);
+      }, 2500);
+    }
+
+    // Check online status
+    async function checkStatus() {
+      try {
+        const res = await fetch(`${API_URL}/health`, { headers: getHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          statusDot.className = 'status-dot online';
+          statusText.textContent = `Online (${data.nodeCount} nodes)`;
+          document.getElementById('stat-nodes').textContent = data.nodeCount;
+          document.getElementById('stat-edges').textContent = data.edgeCount;
+        } else {
+          statusDot.className = 'status-dot';
+          statusText.textContent = 'Server Error (HTTP ' + res.status + ')';
+        }
+      } catch (e) {
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Offline';
+      }
+    }
+
+    // Fetch full graph from API
+    async function fetchGraph() {
+      try {
+        const res = await fetch(`${API_URL}/graph`, { headers: getHeaders() });
+        if (!res.ok) throw new Error('CORS or HTTP Error');
+        const data = await res.json();
+        
+        graphData = {
+          nodes: data.nodes || [],
+          edges: data.edges || []
+        };
+        
+        document.getElementById('stat-nodes').textContent = graphData.nodes.length;
+        document.getElementById('stat-edges').textContent = graphData.edges.length;
+        
+        applyFiltersAndRender();
+        checkStatus();
+      } catch (e) {
+        console.error('Failed to load graph:', e);
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Offline';
+      }
+    }
+
+    // Save connection details
+    document.getElementById('btn-reconnect').addEventListener('click', () => {
+      API_URL = document.getElementById('api-url').value.trim();
+      API_KEY = document.getElementById('api-key').value.trim();
+      
+      localStorage.setItem('sb_api_url', API_URL);
+      localStorage.setItem('sb_api_key', API_KEY);
+      
+      fetchGraph();
+      connectSSE();
+    });
+
+    // Sync vault disk command
+    document.getElementById('btn-reload').addEventListener('click', async () => {
+      try {
+        const btn = document.getElementById('btn-reload');
+        btn.textContent = 'Reloading...';
+        btn.disabled = true;
+        
+        const res = await fetch(`${API_URL}/reload`, {
+          method: 'POST',
+          headers: getHeaders()
+        });
+        
+        if (res.ok) {
+          await fetchGraph();
+        } else {
+          alert('Failed to reload vault. Check API key authorization.');
+        }
+      } catch (e) {
+        alert('Server unreachable during reload: ' + e.message);
+      } finally {
+        const btn = document.getElementById('btn-reload');
+        btn.textContent = '🔄 Sync Vault Reload';
+        btn.disabled = false;
+      }
+    });
+
+    // Helper: color for type
+    function getColorForType(type) {
+      switch (type) {
+        case 'core':
+        case 'system': return 'var(--color-core)';
+        case 'memory': return 'var(--color-memory)';
+        case 'research': return 'var(--color-research)';
+        case 'decision': return 'var(--color-decision)';
+        case 'task': return 'var(--color-task)';
+        case 'insight': return 'var(--color-insight)';
+        default: return 'var(--color-note)';
+      }
+    }
+
+    // Initialize D3 canvas
+    function setupD3() {
+      const parent = document.querySelector('.graph-container');
+      width = parent.clientWidth;
+      height = parent.clientHeight;
+      
+      svg = d3.select('svg.graph-svg');
+      svg.selectAll('*').remove(); // clear
+      
+      container = svg.append('g').attr('class', 'graph-viewport');
+      
+      // Setup Zoom behavior
+      zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => {
+          container.attr('transform', event.transform);
+        });
+        
+      svg.call(zoom);
+      
+      // Simulation setups
+      simulation = d3.forceSimulation()
+        .force('link', d3.forceLink().id(d => d.id).distance(110))
+        .force('charge', d3.forceManyBody().strength(-280))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide().radius(d => getNodeRadius(d) + 15));
+        
+      window.addEventListener('resize', () => {
+        width = parent.clientWidth;
+        height = parent.clientHeight;
+        simulation.force('center', d3.forceCenter(width / 2, height / 2));
+        simulation.alpha(0.3).restart();
+      });
+    }
+
+    // Node radius sizing based on connection count
+    function getNodeRadius(node) {
+      const degree = graphData.edges.filter(e => e.source === node.id || e.target === node.id || e.source.id === node.id || e.target.id === node.id).length;
+      return Math.min(Math.max(6 + degree * 1.5, 8), 24);
+    }
+
+    // Apply Filter & Search parameters and re-render D3 Graph
+    function applyFiltersAndRender() {
+      const searchVal = document.getElementById('search-input').value.toLowerCase().trim();
+      
+      let nodes = [...graphData.nodes];
+      
+      // Filter by legendary type
+      if (selectedTypeFilter) {
+        nodes = nodes.filter(n => n.type === selectedTypeFilter);
+      }
+      
+      // Filter by search terms
+      if (searchVal) {
+        nodes = nodes.filter(n => 
+          n.title.toLowerCase().includes(searchVal) ||
+          n.id.toLowerCase().includes(searchVal) ||
+          (n.tags && n.tags.some(t => t.toLowerCase().includes(searchVal)))
+        );
+      }
+      
+      const nodeIds = new Set(nodes.map(n => n.id));
+      
+      // Filter edges where both source and target are kept
+      const edges = graphData.edges.filter(e => 
+        nodeIds.has(typeof e.source === 'object' ? e.source.id : e.source) &&
+        nodeIds.has(typeof e.target === 'object' ? e.target.id : e.target)
+      );
+      
+      renderGraph(nodes, edges);
+    }
+
+    // D3 Rendering loop
+    function renderGraph(nodes, edges) {
+      const existingNodes = new Map(simulation.nodes().map(d => [d.id, d]));
+      nodes.forEach(n => {
+        if (existingNodes.has(n.id)) {
+          n.x = existingNodes.get(n.id).x;
+          n.y = existingNodes.get(n.id).y;
+          n.vx = existingNodes.get(n.id).vx;
+          n.vy = existingNodes.get(n.id).vy;
+        }
+      });
+      
+      container.selectAll('*').remove();
+      
+      // Markers for links arrow direction
+      container.append('defs').selectAll('marker')
+        .data(['arrow'])
+        .enter().append('marker')
+        .attr('id', d => d)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 22)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-4L10,0L0,4')
+        .attr('fill', 'rgba(255, 255, 255, 0.2)');
+
+      // Draw link paths
+      const link = container.append('g')
+        .attr('class', 'links-group')
+        .selectAll('line')
+        .data(edges)
+        .enter().append('line')
+        .attr('class', 'link')
+        .attr('marker-end', 'url(#arrow)');
+
+      // Draw node groups
+      const node = container.append('g')
+        .attr('class', 'nodes-group')
+        .selectAll('g')
+        .data(nodes, d => d.id)
+        .enter().append('g')
+        .attr('class', 'node-group')
+        .call(drag(simulation));
+
+      // Draw base glowing ring
+      node.append('circle')
+        .attr('r', d => getNodeRadius(d) + 3)
+        .attr('fill', 'none')
+        .attr('stroke', d => getColorForType(d.type))
+        .attr('stroke-opacity', 0.25)
+        .attr('stroke-width', 2);
+
+      // Draw core color circle
+      node.append('circle')
+        .attr('r', d => getNodeRadius(d))
+        .attr('fill', d => getColorForType(d.type))
+        .attr('stroke', '#090d16')
+        .attr('stroke-width', 2);
+
+      // Node text Labels
+      node.append('text')
+        .attr('dy', d => -getNodeRadius(d) - 6)
+        .attr('class', 'node-label')
+        .text(d => d.title);
+
+      // Node hover micro-animations
+      node.on('mouseover', (event, d) => {
+        tooltip.style.opacity = 1;
+        tooltip.innerHTML = `<strong>${d.title}</strong><br><span style="font-size:0.75rem; text-transform:uppercase; color:${getColorForType(d.type)}">${d.type}</span>`;
+        
+        // Highlight neighbors
+        link.classed('highlighted', l => l.source.id === d.id || l.target.id === d.id);
+      })
+      .on('mousemove', (event) => {
+        tooltip.style.left = (event.pageX + 15) + 'px';
+        tooltip.style.top = (event.pageY - 10) + 'px';
+      })
+      .on('mouseout', () => {
+        tooltip.style.opacity = 0;
+        link.classed('highlighted', false);
+      })
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        selectNode(d.id);
+      });
+
+      // Update simulation data
+      simulation.nodes(nodes);
+      simulation.force('link').links(edges);
+      simulation.alpha(0.3).restart();
+
+      // Tick listener
+      simulation.on('tick', () => {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+
+        node
+          .attr('transform', d => `translate(${d.x}, ${d.y})`);
+      });
+
+      if (selectedNodeId) {
+        highlightNodeInSvg(selectedNodeId);
+      }
+    }
+
+    // Drag helper callbacks
+    function drag(simulation) {
+      function dragstarted(event) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      }
+      function dragged(event) {
+        event.subject.fx = event.x;
+        event.subject.fy = event.y;
+      }
+      function dragended(event) {
+        if (!event.active) simulation.alphaTarget(0);
+        event.subject.fx = null;
+        event.subject.fy = null;
+      }
+      return d3.drag()
+        .on('start', dragstarted)
+        .on('drag', dragged)
+        .on('end', dragended);
+    }
+
+    // Highlight node border
+    function highlightNodeInSvg(nodeId) {
+      container.selectAll('.node-group circle')
+        .attr('stroke', function(d) {
+          if (!d) return '#090d16';
+          return d.id === nodeId ? '#ffffff' : '#090d16';
+        })
+        .attr('stroke-width', d => d && d.id === nodeId ? 3 : 2);
+    }
+
+    // Select and load side drawer preview
+    async function selectNode(nodeId) {
+      selectedNodeId = nodeId;
+      highlightNodeInSvg(nodeId);
+      
+      detailsPanel.innerHTML = `
+        <div class="empty-state">
+          <div style="font-size: 1.5rem;">🌀 Loading node...</div>
+        </div>
+      `;
+      detailsPanel.classList.add('open');
+      
+      try {
+        const res = await fetch(`${API_URL}/node/${encodeURIComponent(nodeId)}`, { headers: getHeaders() });
+        if (!res.ok) throw new Error('Not found');
+        const node = await res.json();
+        
+        const typeColor = getColorForType(node.type);
+        
+        let tagsHtml = '';
+        if (node.tags && node.tags.length) {
+          tagsHtml = `<div class="tag-container">${node.tags.map(t => `<span class="tag-pill">#${t}</span>`).join('')}</div>`;
+        }
+
+        let outLinksHtml = '<p style="color:var(--text-muted); font-size:0.85rem;">None</p>';
+        if (node.outLinks && node.outLinks.length) {
+          outLinksHtml = `
+            <div class="node-links-list">
+              ${node.outLinks.map(l => `
+                <div class="link-badge" onclick="navigateToNode('${l.id}')">
+                  <div class="link-badge-left">
+                    <span class="legend-color" style="width:8px; height:8px; background-color:${getColorForType(l.type)}"></span>
+                    <span class="link-badge-title">${l.title}</span>
+                  </div>
+                  <span style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">${l.type}</span>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+
+        let inLinksHtml = '<p style="color:var(--text-muted); font-size:0.85rem;">None</p>';
+        if (node.inLinks && node.inLinks.length) {
+          inLinksHtml = `
+            <div class="node-links-list">
+              ${node.inLinks.map(l => `
+                <div class="link-badge" onclick="navigateToNode('${l.id}')">
+                  <div class="link-badge-left">
+                    <span class="legend-color" style="width:8px; height:8px; background-color:${getColorForType(l.type)}"></span>
+                    <span class="link-badge-title">${l.title}</span>
+                  </div>
+                  <span style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">${l.type}</span>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+
+        const htmlContent = marked.parse(node.content || '');
+
+        detailsPanel.innerHTML = `
+          <div class="details-header">
+            <div class="details-title-area">
+              <h2>${node.title}</h2>
+              <div>
+                <span class="meta-badge" style="background-color:${typeColor}; color:#090d16;">${node.type}</span>
+                <span style="font-size:0.8rem; color:var(--text-muted)">Agent: ${node.agent || 'human'} · ${node.createdAt || ''}</span>
+              </div>
+              ${tagsHtml}
+            </div>
+            <button class="close-btn" onclick="closeDetailsPanel()">&times;</button>
+          </div>
+          <div class="details-body">
+            <div class="markdown-content">${htmlContent}</div>
+            
+            <div class="links-section">
+              <h4>Outgoing Links</h4>
+              ${outLinksHtml}
+            </div>
+            
+            <div class="links-section">
+              <h4>Backlinks</h4>
+              ${inLinksHtml}
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        detailsPanel.innerHTML = `
+          <div class="details-header">
+            <h2>Error Loading Node</h2>
+            <button class="close-btn" onclick="closeDetailsPanel()">&times;</button>
+          </div>
+          <div class="details-body">
+            <p>Could not load node "${nodeId}". It might have been deleted.</p>
+          </div>
+        `;
+      }
+    }
+
+    window.closeDetailsPanel = function() {
+      detailsPanel.classList.remove('open');
+      selectedNodeId = null;
+      highlightNodeInSvg(null);
+    }
+
+    window.navigateToNode = function(nodeId) {
+      const targetNode = graphData.nodes.find(n => n.id === nodeId);
+      if (targetNode) {
+        focusOnNode(targetNode);
+        selectNode(nodeId);
+      } else {
+        alert('Node not loaded in current graph view.');
+      }
+    }
+
+    function focusOnNode(node) {
+      const transform = d3.zoomIdentity
+        .translate(width / 2, height / 2)
+        .scale(1.2)
+        .translate(-node.x, -node.y);
+        
+      svg.transition()
+        .duration(750)
+        .call(zoom.transform, transform);
+    }
+
+    document.getElementById('search-input').addEventListener('input', applyFiltersAndRender);
+
+    // Agent simulator commit logic
+    document.getElementById('btn-sim-commit').addEventListener('click', async () => {
+      const title = document.getElementById('sim-title').value.trim();
+      const type = document.getElementById('sim-type').value;
+      const tagsStr = document.getElementById('sim-tags').value.trim();
+      const content = document.getElementById('sim-content').value.trim();
+
+      if (!title || !content) {
+        alert('Please provide both a Title and Content for the memory.');
+        return;
+      }
+
+      const tags = tagsStr ? tagsStr.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean) : [];
+
+      try {
+        const btn = document.getElementById('btn-sim-commit');
+        btn.textContent = 'Committing...';
+        btn.disabled = true;
+
+        const res = await fetch(`${API_URL}/remember`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            title,
+            type,
+            tags,
+            content,
+            agent: 'web-dashboard-simulator'
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          // Reset simulator inputs
+          document.getElementById('sim-title').value = '';
+          document.getElementById('sim-tags').value = '';
+          document.getElementById('sim-content').value = '';
+          
+          // Refresh graph
+          await fetchGraph();
+          
+          // Flash nodes to visually indicate success
+          setTimeout(() => {
+            pulseNodes([data.id], 'var(--color-memory)');
+            navigateToNode(data.id);
+          }, 300);
+        } else {
+          const errorMsg = data.details ? `${data.error}:\n- ${data.details.join('\n- ')}` : (data.error || 'Failed to commit memory.');
+          alert(errorMsg);
+        }
+      } catch (e) {
+        alert('Error communicating with Second Brain API: ' + e.message);
+      } finally {
+        const btn = document.getElementById('btn-sim-commit');
+        btn.textContent = '🧠 Commit Memory';
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('btn-zoom-in').addEventListener('click', () => {
+      svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+    });
+    document.getElementById('btn-zoom-out').addEventListener('click', () => {
+      svg.transition().duration(300).call(zoom.scaleBy, 0.7);
+    });
+    document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+      svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(width/2 - 100, height/2).scale(0.85));
+    });
+
+    document.querySelectorAll('.legend-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const type = item.getAttribute('data-type');
+        
+        if (selectedTypeFilter === type) {
+          selectedTypeFilter = null;
+          item.style.background = 'none';
+        } else {
+          document.querySelectorAll('.legend-item').forEach(el => el.style.background = 'none');
+          selectedTypeFilter = type;
+          item.style.background = 'rgba(255, 255, 255, 0.08)';
+        }
+        applyFiltersAndRender();
+      });
+    });
+
+    // ── View tabs (Graph / Org Chart) ───────────────────────────────────
+    // Purely additive: switches which .view-pane is visible. The graph
+    // pane's own init()/D3 code above is never touched by this.
+    document.querySelectorAll('.view-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = btn.getAttribute('data-view');
+        document.querySelectorAll('.view-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.view-pane').forEach(p => p.classList.toggle('active', p.id === `view-pane-${view}`));
+        if (view === 'orgchart') loadOrgChart();
+      });
+    });
+
+    // ── Org Chart view (Preact + htm) ───────────────────────────────────
+    // Reference pattern for new views: a real component tree via
+    // htm.bind(preact.h) instead of hand-built innerHTML string
+    // concatenation. See the <script src="preact.min.js"> comment above.
+    const html = htm.bind(preact.h);
+
+    function OrgMember({ m, depth }) {
+      return html`
+        <div key=${m.id} style=${{ marginLeft: `${depth * 16}px`, padding: '3px 0', fontSize: '0.82rem', color: 'var(--text-main)' }}>
+          ${depth > 0 ? '↳ ' : ''}${m.title}
+        </div>
+        ${(m.reports || []).map(r => html`<${OrgMember} key=${r.id} m=${r} depth=${depth + 1} />`)}
+      `;
+    }
+
+    function DepartmentCard({ d }) {
+      const leads = d.members.filter(m => (m.reports || []).length > 0);
+      const leadLabel = leads.length
+        ? `Led by ${leads.map(l => l.title).join(', ')}`
+        : 'No named lead yet — see migrations/001-assign-department-leads.mjs';
+      return html`
+        <div class="org-dept-card">
+          <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <strong style=${{ fontSize: '0.9rem', color: 'var(--text-main)' }}>${d.department}</strong>
+            <span style=${{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>${d.memberCount} member${d.memberCount === 1 ? '' : 's'}</span>
+          </div>
+          <div style=${{ fontSize: '0.75rem', color: '#a5b4fc', margin: '0.2rem 0 0.5rem' }}>${leadLabel}</div>
+          <div>
+            ${d.members.map(m => html`<${OrgMember} key=${m.id} m=${m} depth=${0} />`)}
+          </div>
+        </div>
+      `;
+    }
+
+    function OrgChartView({ departments }) {
+      if (!departments.length) {
+        return html`<p style=${{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No agent personas found in the vault yet.</p>`;
+      }
+      return html`<div>${departments.map(d => html`<${DepartmentCard} key=${d.department} d=${d} />`)}</div>`;
+    }
+
+    async function loadOrgChart() {
+      const rootEl = document.getElementById('org-chart-root');
+      if (!rootEl) return;
+      preact.render(html`<p style=${{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>Loading org chart...</p>`, rootEl);
+      let chart = { departments: [] };
+      try {
+        const res = await fetch(`${API_URL}/org-chart`, { headers: getHeaders() });
+        chart = await res.json();
+      } catch (err) {
+        preact.render(html`<p style=${{ color: '#f87171', fontSize: '0.82rem' }}>Could not reach the Second Brain API.</p>`, rootEl);
+        return;
+      }
+      preact.render(html`<${OrgChartView} departments=${chart.departments || []} />`, rootEl);
+    }
+
+    const refreshOrgChartBtn = document.getElementById('btn-refresh-orgchart');
+    if (refreshOrgChartBtn) refreshOrgChartBtn.addEventListener('click', loadOrgChart);
+
+    window.onload = init;
+  </script>
+</body>
+</html>
