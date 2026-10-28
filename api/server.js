@@ -1,7 +1,7 @@
 /**
  * ══════════════════════════════════════════════════════════════
  *  SECOND BRAIN — REST API Server
- *  Pure Node.js · Zero dependencies · Fully offline
+ *  Native Node.js · No required npm dependencies · Local-first
  *
  *  Start:   node api/server.js
  *  Port:    3747  (or set BRAIN_PORT env var)
@@ -27,7 +27,6 @@
  *   GET  /messages/:agent?unread=false  → read an agent's inbox
  *   GET  /org-chart                     → department/lead structure from persona tags
  *   POST /dedup/scan                    → report near-duplicate node candidates
- *   POST /sandbox/execute               → run a code snippet, sandboxed
  *   POST /embeddings/reindex            → (re)compute semantic vectors for the vault
  *   GET  /export                        → full JSON export
  *   POST /reload                        → force reload vault from disk
@@ -35,7 +34,6 @@
  */
 
 import http   from 'http';
-import https  from 'https';
 import fs     from 'fs';
 import path   from 'path';
 import { URL } from 'url';
@@ -47,17 +45,25 @@ import {
   parseWikiLinks, parseTags, validateNode,
 } from './brain_engine.js';
 import { resolveKeys } from '../sdk/models_config.js';
+import { routeLLM } from '../sdk/llm_router.js';
 import { createGitSync } from '../sdk/git_sync.js';
 import { TaskQueue } from '../sdk/task_queue.js';
 import { Messenger } from '../sdk/messenger.js';
 import { buildOrgChart } from '../sdk/org_chart.js';
 import { scanForDuplicates } from '../sdk/dedup.js';
-import { executeCode } from '../sdk/sandbox.js';
+import { validateServerConfig } from '../sdk/server_config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VAULT_DIR = path.resolve(__dirname, '..', 'vault');
+const VAULT_DIR = process.env.BRAIN_VAULT
+  ? path.resolve(process.env.BRAIN_VAULT)
+  : path.resolve(__dirname, '..', 'vault');
 const PORT      = parseInt(process.env.BRAIN_PORT || '3747', 10);
+const HOST      = process.env.BRAIN_HOST || '127.0.0.1';
 const AUTO_SYNC = process.env.AUTO_GIT_SYNC === 'true';
+const AUTH_KEY  = process.env.BRAIN_KEY || '';
+
+validateServerConfig(HOST, AUTH_KEY);
+fs.mkdirSync(VAULT_DIR, { recursive: true });
 
 // ── In-memory cache (reloaded on vault change) ───────────────────────────────
 let nodes = {};
@@ -104,16 +110,38 @@ function json(res, data, status = 200) {
   res.end(JSON.stringify(data, null, 2));
 }
 
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+
 async function readBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch { resolve({}); } });
+    const chunks = [];
+    let size = 0;
+    let rejected = false;
+    req.on('data', chunk => {
+      if (rejected) return;
+      size += chunk.length;
+      if (size > MAX_REQUEST_BODY_BYTES) {
+        rejected = true;
+        const error = new Error(`Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes`);
+        error.statusCode = 413;
+        reject(error);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (rejected) return;
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch {
+        const error = new Error('Request body must be valid JSON');
+        error.statusCode = 400;
+        reject(error);
+      }
+    });
     req.on('error', reject);
   });
 }
-
-const AUTH_KEY  = process.env.BRAIN_KEY || '';
 
 function authenticate(req, res) {
   if (!AUTH_KEY) return true;
@@ -149,56 +177,18 @@ function makeMessenger() {
   return new Messenger({ apiKey: AUTH_KEY, api: `http://localhost:${PORT}`, silent: false });
 }
 
-async function callGemini(apiKey, prompt) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            title: { type: "STRING", description: "Consolidated, concise title of the note" },
-            content: { type: "STRING", description: "Consolidated note markdown body, keeping important facts and wikilinks" },
-            tags: { type: "ARRAY", items: { type: "STRING" }, description: "Relevant tag names (no hashes)" }
-          },
-          required: ["title", "content", "tags"]
-        }
-      }
-    });
-    
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    
-    const req = https.request(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    }, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try {
-          const data = JSON.parse(body);
-          if (!data.candidates || !data.candidates[0]) {
-            throw new Error(data.error ? data.error.message : 'No content generated');
-          }
-          const text = data.candidates[0].content.parts[0].text;
-          resolve(JSON.parse(text));
-        } catch (e) {
-          reject(new Error(`Failed to parse Gemini response: ${e.message}. Response: ${body}`));
-        }
-      });
-    });
-    
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
 // ── Router ───────────────────────────────────────────────────────────────────
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
+  routeRequest(req, res).catch(error => {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    json(res, { error: error.message || 'Internal server error' }, error.statusCode || 500);
+  });
+});
+
+async function routeRequest(req, res) {
   const url    = new URL(req.url, `http://localhost:${PORT}`);
   const method = req.method.toUpperCase();
   const p      = url.pathname.replace(/\/$/, '') || '/';
@@ -303,7 +293,6 @@ const server = http.createServer(async (req, res) => {
         'GET  /messages/:agent',
         'GET  /org-chart',
         'POST /dedup/scan',
-        'POST /sandbox/execute',
         'POST /embeddings/reindex',
         'GET  /export',
         'POST /reload',
@@ -320,10 +309,7 @@ const server = http.createServer(async (req, res) => {
   // ── Consolidate (POST) ──────────────────────────────────────────────────
   if (method === 'POST' && p === '/consolidate') {
     const body = await readBody(req);
-    const geminiKey = process.env.GEMINI_API_KEY || body.geminiApiKey || '';
-    if (!geminiKey) {
-      return json(res, { error: 'Missing Gemini API Key. Provide GEMINI_API_KEY env variable or pass geminiApiKey in body.' }, 400);
-    }
+    const keys = resolveKeys(body);
 
     // Filter nodes of type: 'memory' (optionally filter by agent)
     const agent = body.agent || null;
@@ -347,17 +333,32 @@ Content:
 ${n.content}
 `).join('\n\n');
 
-    const prompt = `You are the Second Brain REM Sleep Consolidator.
-Review the following raw agent memories and consolidate them into a single, high-density structured note.
-Remove duplicate logs, retain key numbers, facts, learned schemas, decision logic, and learnings.
-Format the output as clean markdown, maintaining or expanding internal wikilinks [[Page Name]] where appropriate.
-Write a clear title and list of tags.
-
-Raw memories to consolidate:
-${memoryText}`;
+    const systemPrompt = `You consolidate agent memory notes into one concise Markdown note.
+Preserve every distinct fact, number, entity, date, condition, and decision. Do not invent facts or combine conflicting values. Keep useful [[wikilinks]].
+Return a JSON object with a non-empty title, a non-empty Markdown content string, and a string-array tags field.`;
+    const userPrompt = `Consolidate these memories while preserving their meaning and details:\n\n${memoryText}`;
 
     try {
-      const result = await callGemini(geminiKey, prompt);
+      const result = await routeLLM(keys, systemPrompt, userPrompt, {
+        json: true,
+        validate: value => {
+          if (!value || typeof value !== 'object' || !Array.isArray(value.tags)) {
+            return 'response must contain a tags array';
+          }
+          if (typeof value.content !== 'string' || !value.content.trim()) {
+            return 'content must be a non-empty string';
+          }
+          const checked = validateNode({
+            title: value.title,
+            content: value.content,
+            type: body.type || 'research',
+            tags: value.tags,
+            agent: agent || 'system',
+            importance: 7,
+          }, false);
+          return checked.valid ? true : checked.errors.join('; ');
+        },
+      });
 
       // Write the new consolidated node
       const newNode = {
@@ -464,8 +465,10 @@ ${memoryText}`;
   // Agents call this instead of reading source files.
   if (method === 'GET' && p === '/recall') {
     const q         = url.searchParams.get('q') || '';
-    const hops      = Math.min(parseInt(url.searchParams.get('hops')      || '1',    10), 3);
-    const maxTokens = Math.min(parseInt(url.searchParams.get('maxTokens') || '2000', 10), 8000);
+    const requestedHops = Number.parseInt(url.searchParams.get('hops') || '1', 10);
+    const requestedTokens = Number.parseInt(url.searchParams.get('maxTokens') || '2000', 10);
+    const hops = Number.isFinite(requestedHops) ? Math.max(0, Math.min(requestedHops, 3)) : 1;
+    const maxTokens = Number.isFinite(requestedTokens) ? Math.max(1, Math.min(requestedTokens, 8000)) : 2000;
     const agentName = url.searchParams.get('agent') || 'unknown';
     if (!q) return json(res, { error: 'Missing ?q= query' }, 400);
 
@@ -772,19 +775,6 @@ ${memoryText}`;
     return json(res, { dryRun, candidateCount: candidates.length, candidates });
   }
 
-  // ── Sandbox: execute code (POST) ──────────────────────────────────────────
-  if (method === 'POST' && p === '/sandbox/execute') {
-    const body = await readBody(req);
-    if (!body.code || !body.language) {
-      return json(res, { error: 'Missing required fields: code, language' }, 400);
-    }
-    if (!['python', 'javascript'].includes(body.language)) {
-      return json(res, { error: 'language must be "python" or "javascript"' }, 400);
-    }
-    const result = await executeCode(body.code, body.language, body.timeoutMs || 5000);
-    return json(res, result);
-  }
-
   // ── Embeddings: force reindex (POST) ──────────────────────────────────────
   // Runs in the background so it doesn't block the response — a full-vault
   // reindex can take a while. No-op-ish (fast, all-cache-hit) on repeat runs
@@ -816,20 +806,20 @@ ${memoryText}`;
   }
 
   return json(res, { error: 'Not found', path: p }, 404);
-});
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 reload();
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log('\n' + '═'.repeat(58));
   console.log('  🧠  SECOND BRAIN API');
-  console.log(`  📡  http://localhost:${PORT}`);
+  console.log(`  📡  http://${HOST}:${server.address().port}`);
   console.log(`  💾  Vault: ${VAULT_DIR}`);
   console.log(`  📝  ${Object.keys(nodes).length} nodes loaded`);
   console.log('═'.repeat(58));
   console.log('\n  AGENT QUICK START:');
   console.log(`  GET /recall?q=your+topic&hops=1    ← low-token context`);
   console.log(`  POST /remember  { title, content, type, agent }`);
-  console.log('\n  Token savings vs reading source files: 95-99%\n');
+  console.log('\n  Recall assembles linked context within a configurable token budget.\n');
 });
