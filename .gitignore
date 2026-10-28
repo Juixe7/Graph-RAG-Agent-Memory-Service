@@ -27,7 +27,4 @@ Thumbs.db
 # not vault content; re-derived from vault markdown via POST /embeddings/reindex.
 vault/.embeddings.db
 
-# Sandboxed code execution scratch space (sdk/sandbox.js)
-sandbox_workspace/
-
 

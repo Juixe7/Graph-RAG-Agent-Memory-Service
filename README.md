@@ -1,260 +1,332 @@
-# 🧠 Autonomous Agent Second Brain — Graph-RAG Memory Core
+# Graph-RAG Agent Memory Service
 
-[![GitHub License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red.svg)](LICENSE)
-[![Dependencies](https://img.shields.io/badge/dependencies-zero-success.svg)](package.json)
-[![Platform](https://img.shields.io/badge/platform-node.js%20%3E%3D%2022.5-orange.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-node%3A--test-blue.svg)](test)
+A local-first learning project that demonstrates how an AI agent can store and retrieve useful context between tasks. Memories are Markdown files in an Obsidian-compatible vault, linked with `[[wikilinks]]`, and exposed through a Node.js REST API, JavaScript SDK, CLI, MCP server, and browser visualizer.
 
-A **zero-dependency, offline-first Graph-RAG memory system** that enables autonomous AI agents to share long-term memories, accumulate research, and coordinate workflows.
+This project explores application-level AI concepts: retrieval, graph traversal, optional embeddings, and LLM provider routing. It does not train a model or claim measured gains in retrieval quality, latency, or token usage.
 
-Designed to operate natively as an **Obsidian Vault** on the filesystem and exposed as a clean REST API and Javascript SDK. By representing memories as interconnected nodes (`[[wikilinks]]`) and fusing **graph traversal, keyword search, optional semantic similarity, and recency** into one ranked signal, it filters and delivers targeted context to LLMs, reducing typical agent input sizes by **95–99%** compared to reading entire codebases or directories.
+![Animated preview of the graph visualizer using sample vault data](assets/visualizer_demo.webp)
 
-![Graph Visualizer Live Demo](assets/visualizer_demo.webp)
+## Table of Contents
 
----
+- [1. Executive Summary](#1-executive-summary)
+  - [1.1 Core Problem Statement](#11-core-problem-statement)
+  - [1.2 Technical Philosophy & Invariants](#12-technical-philosophy--invariants)
+  - [1.3 High-Level Technology Matrix](#13-high-level-technology-matrix)
+- [2. Architecture Overview](#2-architecture-overview)
+  - [2.1 Layered Architecture Diagram](#21-layered-architecture-diagram)
+  - [2.2 Separation of Concerns & Boundary Enforcement](#22-separation-of-concerns--boundary-enforcement)
+- [3. Project Structure](#3-project-structure)
+  - [3.1 Directory Tree](#31-directory-tree)
+  - [3.2 Module Responsibility Matrix](#32-module-responsibility-matrix)
+- [4. Core Features & Subsystems](#4-core-features--subsystems)
+  - [4.1 Markdown Memory Store & Knowledge Graph](#41-markdown-memory-store--knowledge-graph)
+  - [4.2 Hybrid Retrieval & Embedding Cache](#42-hybrid-retrieval--embedding-cache)
+  - [4.3 Graph-Aware Context Recall](#43-graph-aware-context-recall)
+  - [4.4 LLM Routing & Memory Consolidation](#44-llm-routing--memory-consolidation)
+  - [4.5 API Access & Live Vault Updates](#45-api-access--live-vault-updates)
+- [5. Service Layer Documentation](#5-service-layer-documentation)
+- [6. API Documentation](#6-api-documentation)
+  - [6.1 Core Endpoints & Route Definitions](#61-core-endpoints--route-definitions)
+  - [6.2 Key Request & Response DTOs](#62-key-request--response-dtos)
+- [7. Configuration Reference](#7-configuration-reference)
+- [8. Deployment & Setup Guide](#8-deployment--setup-guide)
+  - [8.1 Prerequisites](#81-prerequisites)
+  - [8.2 Install & Choose a Vault](#82-install--choose-a-vault)
+  - [8.3 Start the API & MCP Server](#83-start-the-api--mcp-server)
+  - [8.4 Launch the UI & CLI](#84-launch-the-ui--cli)
+  - [8.5 Run a Local Demo](#85-run-a-local-demo)
+  - [8.6 CI & Developer Checks](#86-ci--developer-checks)
+- [9. Workflow Diagrams](#9-workflow-diagrams)
+- [10. Troubleshooting & Operations Guide](#10-troubleshooting--operations-guide)
+- [11. Verification & Empirical Benchmarks](#11-verification--empirical-benchmarks)
 
-## 🚀 Why This Project Stands Out (Portfolio Highlights)
+## 1. Executive Summary
 
-This project showcases several advanced backend engineering principles and data modeling architectures:
+The service gives an agent or application a persistent notebook. A client saves a memory, searches for relevant notes later, and can request a context string containing the selected notes and their linked neighbors. Notes stay human-readable on disk and can be edited with a Markdown editor such as Obsidian.
 
-*   **Zero-Dependency Node.js Backend:** Built using pure native Node.js ES Modules (`http`, `fs`, `path`, `child_process`, `node:sqlite`, `node:test`). Instantly boots in milliseconds, is highly secure against dependency vulnerability chains, and is extremely portable. Every capability added since 1.0 — semantic search, dedup, task queue, messaging, sandboxed execution — follows the same rule: no required npm dependency, ever. An optional one (a cloud embedding key, Docker, `@huggingface/transformers`) simply degrades gracefully to "unavailable" when absent, never a crash.
-*   **Graph-RAG vs. Flat-RAG:** Flat RAG systems (using simple vector similarity) yield disconnected text chunks that lose context. This engine parses Obsidian-style wikilinks (`[[Page Name]]`) to build an adjacency map, tracing logical connections between ideas.
-*   **Hybrid Search via Reciprocal Rank Fusion:** `/search` and `/recall` fuse a keyword arm (the original cached TF-IDF engine, untouched) with an optional semantic-similarity arm (cosine similarity over cached embeddings) using Reciprocal Rank Fusion — the same rank-based merge technique used to combine independent, non-comparable ranking signals without normalizing raw scores across them. With no embedding provider configured, this is provably identical to the original keyword-only behavior: the semantic arm short-circuits to empty and the fused result falls back to exactly what plain TF-IDF would return.
-*   **Token Economics (Optimized Context):** Rather than feeding raw file structures (~50k tokens) or arbitrary chunks into LLM context windows, agents query `/recall` to receive a pre-assembled context payload restricted to a custom token budget (~300–2,000 tokens), preventing model attention degradation.
-*   **Native File System Hot-Reloading (`fs.watch()`):** Automatically invalidates and refreshes the memory index in real time when files are edited (either manually in Obsidian or programmatically via the API). Built using native file system events with a debounce timer to sustain sub-millisecond query performance.
-*   **Cached TF-IDF Search Engine Optimization:** To achieve sub-millisecond search latency, the backend pre-tokenizes vault contents and pre-calculates inverse document frequencies (IDF) and vector magnitudes during graph cache loading, eliminating O(N) tokenization and regex parsing on every search.
-*   **SQLite-Backed Semantic Embeddings:** Optional per-node vector storage via `node:sqlite` (built into Node ≥22.5, no install, no native compile step) — real indexed per-row reads/writes and actual transactions, instead of a single ever-growing JSON blob. Multi-provider fetch (OpenAI, Gemini) with an optional local-model last resort, so semantic search never goes fully dark just because a cloud key ran out of quota.
-*   **Optimistic Concurrency Control (OCC):** Prevents concurrent write overrides. Nodes contain a `version` property in YAML frontmatter that increments on actual updates. `PATCH` calls require the matching `version`, failing with `409 Conflict` if modified concurrently.
-*   **Strict Node Schema Validation:** Validates incoming payloads (`title` filename characters, `type` enums, `importance` bounds, and `tags` format) before writing files to disk, ensuring strict memory bank integrity.
-*   **Granular Read & Write Authentication Security:** When `BRAIN_KEY` is configured, Bearer Token authentication is enforced across all endpoints—including search, recall, and graph views. The telemetry stream endpoint (`/stream`) requires a matching `?token=` parameter to block raw data exposure on public URLs.
-*   **PII & Secrets Safeguard:** `sdk/safeguard.js` is a standalone regex-based redaction utility (API keys across ~20 providers, DB connection strings, PEM private keys, JWTs, SSNs, Luhn-checked credit card numbers) any code path in the project can call before logging, storing, or echoing text back.
-*   **Near-Duplicate Memory Reconciliation:** `sdk/dedup.js` gates candidates with a cheap embedding-similarity check, then asks an LLM judge whether two similar notes are truly the same fact (merge, preserving every detail) or materially different (keep both). Fails open on any error — a dedup failure never blocks a normal memory write. `POST /dedup/scan` reports candidates vault-wide without ever auto-merging.
-*   **Multi-Agent Coordination Primitives:** A vault-backed task queue (status tags, dependency-based blocking/cascading release) and agent-to-agent messenger (inbox/outbox as vault nodes), plus an org chart derived read-only from persona tags/frontmatter already in the vault. These are lightweight coordination primitives — a shared, auditable, markdown-backed task list and inbox — not a full autonomous orchestrator; something else still has to watch `pending` tasks and do the work.
-*   **Sandboxed Code Execution:** `POST /sandbox/execute` prefers a network-disabled, memory-capped, auto-removed Docker container when Docker is available, and falls back to a restricted local child process (keyword blacklist, hard timeout) when it isn't — never a required dependency either way.
-*   **Resilient, Path-Scoped Git Sync:** `sdk/git_sync.js` replaces a naive "stage the whole vault folder" auto-commit with one that stages only the files a caller says actually changed (so an unrelated in-flight edit never gets swept into someone else's commit) and serializes/queues concurrent writes instead of racing on `.git/index.lock`.
-*   **Unified Multi-Provider LLM Router:** `sdk/llm_router.js` calls Anthropic, OpenAI-compatible, Gemini, NVIDIA NIM, or local Ollama behind one interface, falling through a configurable priority chain on any failure, and repairs the most common way smaller models emit almost-valid JSON (unescaped control characters inside a string).
-*   **MCP Server & CLI:** `mcp/server.js` is a zero-dependency, stdio JSON-RPC MCP server exposing this REST API as MCP tools to any MCP-aware client, auto-spawning the API server if it isn't already running. `sdk/cli.js` (`npm run brain -- <command>`) wraps the same API for quick terminal use.
-*   **Interactive Agent Simulator UI:** Features a premium sidebar form in the dashboard where you can simulate multi-agent memory writes, watching the nodes, links, and EventSource telemetry update dynamically in the D3.js visualization — now alongside a second **Org Chart** tab built with vendored Preact + htm (see [UI Architecture](#-ui-architecture)).
-*   **Human-Agent-in-the-Loop Coordination:** Because memories are serialized as plain Markdown files (`.md`) with YAML frontmatter, a human can open the same folder in Obsidian to audit agent reasoning, edit notes, or add guidelines directly into the graph.
-*   **Test Suite & CI:** A `node:test`-based suite (no test framework dependency either) covers every module above, isolating side effects via temp directories, mocked `fetch`, and env-var overrides. GitHub Actions runs it across Node 22.x/24.x on every push/PR to `main`, plus a syntax sweep over every file in `api/`, `sdk/`, `mcp/`.
+### 1.1 Core Problem Statement
 
----
+An LLM request does not automatically retain information from earlier tasks. This project provides a small external memory store and retrieval API so a client can save information and fetch related notes when building a later prompt. The client remains responsible for calling its LLM and deciding what to do with the returned context.
 
-## ⚙️ Technical Architecture
+### 1.2 Technical Philosophy & Invariants
+
+- **Readable source data:** Markdown files are the persistent memory records; graph relationships come from `[[wikilinks]]`.
+- **Local-first core:** The API, vault, graph, and keyword search work without hosted model credentials.
+- **Optional AI integrations:** Embeddings and LLM provider calls add features but are not required to start the service.
+- **Model-aware vectors:** Cached embeddings record their source model and content hash; stale or incompatible vectors are excluded from semantic ranking.
+- **Bounded recall:** Recall uses a configurable, approximate character-based token estimate, not a model-specific tokenizer.
+- **Safe network default:** The API binds to loopback by default; binding to a non-loopback address requires `BRAIN_KEY`.
+
+### 1.3 High-Level Technology Matrix
+
+| Area | Technology | Role |
+|---|---|---|
+| Runtime | Node.js 22.5+ | Native HTTP server, filesystem, fetch, and SQLite APIs |
+| Memory storage | Markdown + YAML frontmatter | Human-readable notes and metadata |
+| Graph | Obsidian-style wikilinks | Relationships between memories |
+| Keyword retrieval | TF-IDF | Local text-based ranking |
+| Semantic retrieval | Optional OpenAI/Gemini embeddings; optional local Transformers model | Embedding similarity for notes and queries |
+| Vector cache | SQLite via `node:sqlite` | Persist vectors with content hashes and model IDs |
+| Hybrid ranking | Reciprocal Rank Fusion (RRF) | Combine keyword and semantic result rankings |
+| LLM providers | Anthropic, Gemini, OpenAI-compatible, NVIDIA, Ollama | Optional routed generation for selected features |
+| Interfaces | REST, JavaScript SDK, CLI, MCP, browser UI | Ways for clients and people to access the service |
+| Tests / CI | `node:test`, GitHub Actions | Automated behavior tests and syntax checks |
+
+## 2. Architecture Overview
+
+### 2.1 Layered Architecture Diagram
 
 ```mermaid
-graph TD
-    subgraph Client Environments
-        Agent1[Research Agent] -->|SDK: remember/recall| API[🧠 Second Brain REST API]
-        Agent2[Pipeline Agent] -->|SDK: remember/recall| API
-        Human[Human Operator] -->|Edits Notes| Obs[Obsidian Editor]
-        MCPClient[MCP-aware Client] -->|stdio JSON-RPC| MCP[mcp/server.js]
-        CLI[sdk/cli.js] -->|REST| API
-        MCP -->|auto-spawns / proxies| API
-    end
-
-    subgraph API Server
-        API --> Engine[Graph Engine]
-        Engine --> Search[Hybrid Search: TF-IDF + Semantic RRF]
-        Engine --> Cache[In-Memory Graph Cache]
-        Engine --> FS[Local FS Watcher]
-        API --> Tasks[Task Queue]
-        API --> Msg[Messenger]
-        API --> Org[Org Chart]
-        API --> Dedup[Dedup Scan]
-        API --> Sandbox[Sandboxed Execution]
-    end
-
-    subgraph Storage Layer
-        FS -->|Reads/Writes| Vault[(Markdown Vault)]
-        Search -->|Vectors| EmbedDB[(SQLite: .embeddings.db)]
-        Obs -->|Reads/Writes| Vault
-        Engine -->|Optional Async Sync| Git[Path-Scoped Git Sync]
-    end
-
-    subgraph LLM Layer
-        Dedup --> Router[LLM Router: Anthropic / OpenAI / Gemini / NVIDIA / Ollama]
-    end
-
-    Git -->|Auto Commit & Push| GitHub[Private GitHub Repo]
+flowchart LR
+    Client[Agent or person] --> Interfaces[REST API / SDK / CLI / MCP / UI]
+    Interfaces --> Engine[Memory and graph engine]
+    Engine --> Search[TF-IDF + optional semantic search]
+    Search --> RRF[Reciprocal Rank Fusion]
+    RRF --> Recall[Graph-aware context recall]
+    Engine --> Vault[(Markdown vault)]
+    Search --> Cache[(SQLite embedding cache)]
+    Engine --> Watcher[Filesystem watcher]
+    Watcher --> Engine
+    Optional[Optional LLM providers] --> Router[LLM router]
+    Router --> Interfaces
 ```
 
----
+### 2.2 Separation of Concerns & Boundary Enforcement
 
-## 🎨 UI Architecture
+- `api/brain_engine.js` loads and indexes vault notes, parses links, searches, and builds graph/context results.
+- `api/server.js` handles HTTP routes, authentication, request parsing, and API responses.
+- `sdk/` contains the HTTP client, retrieval helpers, provider configuration, task/message helpers, and CLI launcher.
+- `mcp/server.js` adapts the REST API for MCP clients.
+- `ui/` contains the browser visualizer; it reads and updates data through the REST API.
+- `test/` exercises the modules and API with temporary vaults and mocked provider responses.
 
-The project contains a dynamic, high-tech dashboard with two tabs:
+## 3. Project Structure
 
-*   **Graph tab (original):** built with **D3.js (v7)** and **Marked.js**. Force-directed graph simulation (nodes sized by link degree, colored by type), an interactive context panel for reading a node's markdown and navigating its outlinks/backlinks, and live filters + live reload via `/reload`.
-*   **Org Chart tab (new):** built with **vendored Preact + htm** (`ui/preact.min.js`, `ui/htm.min.js` — local files, no CDN, no build step). `htm.bind(preact.h)` turns a plain tagged template into the same VNode tree JSX would, rendered via `preact.render` as a real component tree (`OrgMember`, `DepartmentCard`, `OrgChartView`) fetching `GET /org-chart`. This is the **recommended pattern for any new view added to this file going forward** — the rest of `ui/index.html` (the Graph tab) intentionally stays vanilla JS/innerHTML rather than being retroactively rewritten.
+### 3.1 Directory Tree
 
----
+```text
+.
+├── .github/workflows/ci.yml
+├── api/                 # HTTP server and vault/graph engine
+├── assets/              # Visualizer previews
+├── mcp/                 # MCP stdio server
+├── migrations/          # Vault migration scripts and conventions
+├── sdk/                 # Client SDK, CLI, embeddings, LLM router, utilities
+├── test/                # Node test suite
+├── ui/                  # Browser graph and org-chart views
+├── vault/               # Example Markdown memories and linked notes
+├── package.json
+└── README.md
+```
 
-## 📡 REST API & Interface Directory
+### 3.2 Module Responsibility Matrix
 
-| Method | Endpoint | Payload / Query | Description |
-|---|---|---|---|
-| **GET** | `/health` | — | Returns server stats, port, and vault nodes/edges volume. |
-| **GET** | `/nodes` | — | Gets list of all index nodes with trimmed previews. |
-| **GET** | `/node/:id` | — | Gets specific note body, parsed outgoing links, and incoming backlinks. |
-| **GET** | `/search` | `?q=query&limit=10` | Hybrid keyword + semantic search (Reciprocal Rank Fusion), fused with the original TF-IDF ranking. |
-| **GET** | `/recall` | `?q=query&hops=1` | **Core Agent Context:** graph context assembler within a token budget, seeded by hybrid search. |
-| **GET** | `/graph` | — | Returns complete adjacency map nodes and edges. |
-| **POST** | `/remember` | `{title, content, type, agent}` | Commits a new markdown node into the vault directory. |
-| **PATCH** | `/node/:id` | `{title, content, type, tags}` | Modifies an existing file's text content or YAML frontmatter metadata (OCC via `version`). |
-| **DELETE**| `/node/:id` | — | Deletes a note from the disk. |
-| **POST** | `/tasks/submit` | `{prompt, agents, priority, dependencies}` | Submits a task to the vault-backed task queue. |
-| **GET** | `/tasks` | `?status=pending` | Lists tasks, optionally filtered by status tag. |
-| **PATCH** | `/tasks/:id` | `{status, content}` | Updates a task's status; auto-releases/cascades dependents. |
-| **POST** | `/messages/send` | `{fromAgent, toAgent, content, subject}` | Sends an agent-to-agent message. |
-| **GET** | `/messages/:agent` | `?unread=false` | Reads an agent's inbox. |
-| **GET** | `/org-chart` | — | Department/lead structure derived from persona tags & frontmatter. |
-| **POST** | `/dedup/scan` | `{dryRun, judge}` | Reports near-duplicate node candidates; never auto-merges. |
-| **POST** | `/sandbox/execute` | `{code, language, timeoutMs}` | Runs a code snippet sandboxed (Docker, or a restricted local fallback). |
-| **POST** | `/embeddings/reindex` | `{}` | (Re)computes semantic vectors for the vault in the background. |
-| **GET** | `/export` | — | Full JSON export. |
-| **POST** | `/reload` | — | Refreshes the in-memory cache manually. |
+| Module | Responsibility |
+|---|---|
+| `api/server.js` | REST API, route handling, auth, request limits, SSE, and startup |
+| `api/brain_engine.js` | Markdown parsing/writing, graph construction, keyword search, hybrid ranking, recall |
+| `sdk/index.js` | JavaScript client for the REST API |
+| `sdk/embeddings.js` | Provider calls, SQLite vector cache, content hashes, cache migration |
+| `sdk/llm_router.js` | Optional provider selection, fallback, and JSON response parsing |
+| `sdk/dedup.js` | Candidate similarity scan and optional LLM duplicate judge |
+| `sdk/task_queue.js`, `sdk/messenger.js` | Vault-backed task and message helpers |
+| `sdk/org_chart.js` | Org-chart data derived from agent notes |
+| `sdk/cli.js`, `sdk/open_ui.js` | Command-line and browser launchers |
+| `mcp/server.js` | MCP tools backed by the local REST API |
+| `ui/index.html` | D3 graph viewer and org-chart view |
 
----
+## 4. Core Features & Subsystems
 
-## 📦 SDK Quick Start & Code Quality
+### 4.1 Markdown Memory Store & Knowledge Graph
 
-The Client SDK is written in clean, modern Javascript using native `fetch`.
+Notes are Markdown files with YAML frontmatter. The engine parses `[[wikilinks]]` to build graph edges, backlinks, and related-note traversal. Editing a note in a Markdown editor remains compatible with the vault format.
 
-```javascript
-import { SecondBrain } from './sdk/index.js';
+### 4.2 Hybrid Retrieval & Embedding Cache
 
-// Initialize Client (Reads optional BRAIN_API & BRAIN_KEY env variables)
-const brain = new SecondBrain({
-  agent: 'pipeline-agent',
-  api: 'http://localhost:3747',
-  apiKey: process.env.BRAIN_KEY
-});
+Keyword search uses TF-IDF. When embeddings are configured and cached, the semantic result list is combined with keyword results using Reciprocal Rank Fusion. The embedding cache is stored in SQLite and tracks note content hashes and embedding model IDs so stale or cross-model vectors do not affect rankings. Retrieval quality has not been measured against a labeled benchmark set.
 
-/**
- * Workflow Scenario: Context Recall -> Task Execution -> Memory Write
- */
-async function runAutoPipeline() {
-  // 1. Fetch relevant context within 1 Graph Hop and 1500 token budget
-  const context = await brain.recall('API rate limiting design', 1, 1500);
-  
-  // 2. Inject context directly into your LLM prompt
-  const llmPrompt = `
-    ${context.systemPrompt}
-    
-    Task: Design rate limiter middleware for backend services.
-  `;
-  const result = await myLlmClient.generate(llmPrompt);
-  
-  // 3. Save learnings back to the shared memory bank for other agents
-  await brain.remember(result, {
-    title: 'Rate Limiting Middleware Specification',
-    type: 'research',
-    tags: ['infrastructure', 'security', 'rate-limit']
-  });
+### 4.3 Graph-Aware Context Recall
+
+`/recall` searches for seed notes, follows wikilinks up to the requested hop limit, and returns selected notes plus a prompt-ready context string. The supplied budget is enforced using a portable character-based estimate; actual token counts vary by model tokenizer.
+
+### 4.4 LLM Routing & Memory Consolidation
+
+The shared LLM router supports configured provider fallbacks. It is used by optional LLM-backed operations such as memory consolidation and duplicate judging. Consolidation validates the returned title, content, and tags before writing a new note and archiving source memories. Provider calls require the user's own configuration; automated tests mock provider responses.
+
+### 4.5 API Access & Live Vault Updates
+
+The API binds to `127.0.0.1` by default. A filesystem watcher reloads the index after Markdown changes. When `BRAIN_KEY` is configured, protected API routes require a bearer token; non-loopback binding is rejected without a key. The server accepts JSON request bodies up to 1 MiB.
+
+## 5. Service Layer Documentation
+
+| Service | Inputs | Output / side effect |
+|---|---|---|
+| Memory and graph engine | Vault files, memory text, search query | Parsed notes, graph links, ranked results, recalled context |
+| Embedding service | Note/query text and optional provider credentials | Model-tagged vector in SQLite; failures leave keyword search available |
+| LLM router | System/user prompts and provider configuration | Text or validated JSON from the first successful configured provider |
+| Deduplication service | Nodes, optional embeddings, optional LLM judge | Possible duplicate pairs for review; scan does not auto-merge |
+| Task queue / messenger | Task or message fields | Markdown-backed task and message records |
+| MCP adapter | MCP JSON-RPC tool requests | Calls to the local REST API |
+
+## 6. API Documentation
+
+All routes use `http://127.0.0.1:3747` by default. JSON write requests use `Content-Type: application/json`. When `BRAIN_KEY` is set, send `Authorization: Bearer <key>` to protected routes.
+
+### 6.1 Core Endpoints & Route Definitions
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/health` | Service status and vault counts |
+| `GET` | `/nodes`, `/node/:id` | List or retrieve memory nodes |
+| `GET` | `/search?q=...&limit=10` | Keyword and optional semantic search |
+| `GET` | `/recall?q=...&hops=1&maxTokens=2000` | Retrieve graph-connected context |
+| `GET` | `/graph`, `/type/:type`, `/tags`, `/tag/:tag`, `/agent/:name` | Browse graph and filtered notes |
+| `POST` | `/remember` | Save a memory note |
+| `PATCH`, `DELETE` | `/node/:id` | Update or delete a note |
+| `POST` | `/consolidate` | Consolidate memory notes with a configured LLM |
+| `POST` | `/dedup/scan` | Report possible duplicates for review |
+| `POST` | `/embeddings/reindex` | Start background embedding refresh |
+| `POST` | `/tasks/submit`, `GET /tasks`, `PATCH /tasks/:id` | Manage vault-backed tasks |
+| `POST` | `/messages/send`, `GET /messages/:agent` | Send and read agent messages |
+| `GET` | `/org-chart`, `/export` | Read org chart or export vault data |
+| `POST` | `/reload` | Reload the vault index |
+| `GET` | `/stream` | Subscribe to server-sent events |
+
+### 6.2 Key Request & Response DTOs
+
+Save a memory:
+
+```json
+{
+  "title": "Token Bucket Design",
+  "content": "A token bucket handles burst traffic.",
+  "type": "memory",
+  "agent": "demo-agent",
+  "tags": ["rate-limits"]
 }
 ```
 
-### CLI
+Recall context:
 
-```bash
-npm run brain -- status
-npm run brain -- recall "API rate limiting design"
-npm run brain -- tasks submit "Investigate rate limiting approaches" --agents=pipeline-agent
-npm run brain -- org-chart
+```http
+GET /recall?q=rate%20limiting&hops=1&maxTokens=1500
 ```
 
-### MCP Server
+The response includes `query`, `nodes`, `nodeCount`, `tokenEstimate`, and `systemPrompt`. `tokenEstimate` is approximate and can differ from a provider's tokenizer.
 
-`mcp/server.js` is a zero-dependency, stdio JSON-RPC MCP server exposing this repo's REST API as MCP tools (`brain_recall`, `brain_remember`, `brain_search`, `brain_node_get`, `brain_tasks_submit`, `brain_tasks_list`, `brain_messages_send`, `brain_messages_get`, `brain_health`). It auto-spawns `api/server.js` on first tool call if the API isn't already running, so an MCP client only needs to point at `node mcp/server.js` — no separate server-start step. Configure it in an MCP-aware client the same way you'd configure any other stdio MCP server, pointing its command at `node mcp/server.js` from this repo's root (set `BRAIN_KEY`/`BRAIN_PORT` in its environment if your instance uses them).
+## 7. Configuration Reference
 
----
-
-## 🔒 Security & Authentication Setup
-
-By default, the server runs in local/development mode with authentication disabled. For cloud deployments, multi-agent networks, or when exposing the REST API endpoints publicly, you should enforce Bearer Token authentication:
-
-1. **Set the Secret Key:**
-   Define the `BRAIN_KEY` environment variable on your system or server:
-   ```bash
-   export BRAIN_KEY="your-highly-secure-secret-token"
-   ```
-2. **Enforced Protection:**
-   Once `BRAIN_KEY` is set, all mutative endpoints (`POST /remember`, `POST /reload`, `POST /consolidate`, `PATCH /node/:id`, `DELETE /node/:id`, the task/message/dedup/sandbox endpoints, etc.) will block unauthorized requests and return `401 Unauthorized`.
-3. **Authorization Header:**
-   Incoming requests must include the token in the `Authorization` header:
-   ```http
-   Authorization: Bearer your-highly-secure-secret-token
-   ```
-4. **Client SDK Configuration:**
-   When initializing the Javascript client SDK, inject the token using the `apiKey` configuration option:
-   ```javascript
-   const brain = new SecondBrain({
-     api: 'http://localhost:3747',
-     apiKey: process.env.BRAIN_KEY // Or pass the token directly
-   });
-   ```
-5. **PII/Secrets Safeguard:** `sdk/safeguard.js`'s `sanitizeContent()` is available for any code path (custom endpoints, ingestion pipelines, logging) that wants to redact API keys, DB URLs, PEM keys, JWTs, SSNs, or credit card numbers before persisting or echoing text.
-
----
-
-## 🧩 Optional Capabilities (Graceful Degradation)
-
-Every capability below is additive and opt-in — with none of it configured, the server behaves exactly as a plain zero-dependency TF-IDF/graph memory store, which remains the default.
-
-| Capability | Enable by setting | Behavior when unset |
+| Variable | Purpose | Default |
 |---|---|---|
-| Semantic search arm, dedup similarity gate | `OPENAI_API_KEY` and/or `GEMINI_API_KEY` (or install `@huggingface/transformers` for a local last-resort model) | Semantic arm returns no candidates; search/recall are identical to keyword-only TF-IDF. |
-| LLM-judged dedup, LLM router calls | Any of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`/`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `NVIDIA_API_KEY`, or a local Ollama at `OLLAMA_HOST` | Falls through the provider chain to Ollama; if nothing is reachable, the caller (e.g. the dedup judge) fails open. |
-| Sandboxed execution via Docker | A running Docker daemon | Falls back to a restricted local child process with a keyword blacklist. |
-| Auto git sync | `AUTO_GIT_SYNC=true` | No-op; nothing is committed or pushed. |
+| `BRAIN_HOST` | API bind interface | `127.0.0.1` |
+| `BRAIN_PORT` | API port | `3747` |
+| `BRAIN_KEY` | Protect API routes; required for non-loopback bind | unset |
+| `BRAIN_VAULT` | Path to Markdown vault | repository `vault/` |
+| `AUTO_GIT_SYNC` | Enable path-scoped Git sync for vault edits | `false` |
+| `LLM_PROVIDER_ORDER` | LLM fallback order | `anthropic,nvidia,gemini,openai,ollama` |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `NVIDIA_API_KEY` | Optional hosted LLM credentials | unset |
+| `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | Optional OpenAI/OpenRouter chat credentials; OpenAI key can also enable embeddings | unset |
+| `OLLAMA_HOST`, `OLLAMA_MODEL` | Local Ollama endpoint and model | `http://localhost:11434`, `llama3.2:3b` |
+| `OPENAI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_MODEL` | Embedding model IDs | configured defaults in `sdk/models_config.js` |
+| `OPENAI_EMBEDDING_API_BASE` | OpenAI-compatible embedding endpoint | `https://api.openai.com/v1` |
 
-### Environment Settings
+Provider model IDs and API bases can be overridden with the variables documented in `sdk/models_config.js`. Keep credentials in local environment variables; do not commit them.
 
-| Variable | Description | Default |
-|---|---|---|
-| `BRAIN_PORT` | The port the REST API listens on. | `3747` |
-| `BRAIN_KEY` | Optional. If set, mutative endpoints require a matching bearer token. | `""` |
-| `AUTO_GIT_SYNC` | Optional. If `true`, the server commits & pushes modifications to GitHub (path-scoped, serialized — see `sdk/git_sync.js`). | `false` |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` | Optional. Enables the semantic search/dedup embeddings arm. | unset |
-| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `NVIDIA_API_KEY` / `OLLAMA_HOST` | Optional. Configures the LLM router's provider chain (`sdk/models_config.js`). | unset / `http://localhost:11434` |
-| `LLM_PROVIDER_ORDER` | Optional. Overrides the router's fallback priority order. | `anthropic,nvidia,gemini,openai,ollama` |
+## 8. Deployment & Setup Guide
 
----
+### 8.1 Prerequisites
 
-## 🛠️ Configuration & Setup
+- Node.js 22.5 or newer (`node:sqlite` is used for the embedding cache).
+- A browser for the visualizer.
+- Optional: a hosted provider API key or a local Ollama installation for LLM/embedding features.
 
-### Requirements
-*   Node.js (**>= 22.5.0** — `sdk/embeddings.js` uses the built-in `node:sqlite` module, available starting there)
-*   Web Browser (for Visualizer UI)
+### 8.2 Install & Choose a Vault
 
-### Installation
-Clone the repository:
 ```bash
-git clone https://github.com/ara-5/mind-mri-agent-second-brain.git
-cd mind-mri-agent-second-brain
+git clone https://github.com/Juixe7/Graph-RAG-Agent-Memory-Service.git
+cd Graph-RAG-Agent-Memory-Service
 ```
 
-### Start Server
+The project has no required npm dependencies, so `npm install` is not needed. It includes sample Markdown notes under `vault/`. To use another vault, set `BRAIN_VAULT` to its path before starting the server.
+
+### 8.3 Start the API & MCP Server
+
+Start the REST API:
+
 ```bash
-# Production start
 npm start
-
-# Development watch mode
-npm run dev
 ```
 
-### Launch Visualizer UI
+Configure an MCP-aware client to launch the stdio server with `node mcp/server.js` from the repository root. The MCP server starts the REST API automatically when its first tool request arrives if the API is not already running. `npm run mcp` launches the process for an MCP client that manages its standard input and output.
+
+```bash
+npm run mcp
+```
+
+
+### 8.4 Launch the UI & CLI
+
 ```bash
 npm run ui
+npm run brain -- status
+npm run brain -- search "rate limiting"
+npm run brain -- recall "rate limiting" --hops=1 --tokens=1500
 ```
-*(Runs a cross-platform command to open `ui/index.html` in your default browser)*
 
-### Run Tests
+The visualizer connects to the local API and displays the notes and links in the vault. It is an interface for inspecting the memory graph; it does not itself demonstrate semantic retrieval quality.
+
+### 8.5 Run a Local Demo
+
+1. Start the API with `npm start`.
+2. Open the UI with `npm run ui`; inspect nodes and their wikilink connections.
+3. Search or recall a topic in the CLI, for example `npm run brain -- recall "artificial intelligence" --hops=1`.
+4. Save a test memory through the UI or SDK, then reload and inspect its graph connections.
+
+Optional provider features can be demonstrated by setting a provider key in the local environment. Do not put keys in source files or screenshots.
+
+### 8.6 CI & Developer Checks
+
+GitHub Actions runs `npm test` and `node --check` over JavaScript modules on Node.js 22.x and 24.x for pushes and pull requests targeting `main`. Run the same project checks locally with:
+
 ```bash
 npm test
 ```
-Runs the full `node:test` suite (`test/*.test.js`) — no test framework dependency, isolates side effects via temp directories, mocked `fetch`, and env-var overrides. CI (`.github/workflows/ci.yml`) runs this across Node 22.x/24.x on every push/PR to `main`.
 
-### Vault Migrations
-See `migrations/README.md` for the one-file-per-migration, idempotent, never-fabricate-data convention, and `migrations/001-assign-department-leads.mjs` for the first real migration (assigns org-chart leads from unambiguous persona-title keywords).
+## 9. Workflow Diagrams
+
+Memory retrieval flow:
+
+```mermaid
+sequenceDiagram
+    participant C as Agent/client
+    participant A as REST API
+    participant E as Search/graph engine
+    participant V as Markdown vault
+    participant S as SQLite vector cache
+    C->>A: GET /recall?q=...
+    A->>E: Search query and recall limits
+    E->>V: Read indexed notes and wikilinks
+    E->>S: Read compatible cached vectors, if available
+    E-->>A: Ranked notes and linked context
+    A-->>C: Context string and approximate token estimate
+```
+
+## 10. Troubleshooting & Operations Guide
+
+| Symptom | Check |
+|---|---|
+| API does not start | Confirm Node.js is 22.5+ and port `3747` is available. |
+| UI says Offline | Start the API first; check the API URL in the UI. |
+| API returns `401` | Enter the configured `BRAIN_KEY` in the UI or send the bearer token. |
+| Remote bind is rejected | Set `BRAIN_KEY`, or use the loopback default. |
+| Semantic search returns no additional results | Configure an embedding provider, run `POST /embeddings/reindex`, and check server logs. Keyword search remains available without embeddings. |
+| LLM feature fails | Check the selected provider key, model configuration, provider availability, and `LLM_PROVIDER_ORDER`. |
+| A note edit is not reflected | Wait for the filesystem watcher or call `POST /reload`. |
+
+## 11. Verification & Empirical Benchmarks
+
+The test suite covers selected storage, graph, retrieval, provider-routing, and API behavior. Provider network responses are mocked in tests; passing tests do not verify a live provider account.
+
+Local verification on Node.js 23.6.0: **81 tests passed**. The GitHub Actions workflow separately checks Node 22.x and 24.x after a push.
+
+No labeled retrieval dataset or performance benchmark is currently included. Do not interpret the approximate recall token estimate as measured token savings or a quality metric.

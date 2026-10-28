@@ -1,12 +1,12 @@
 {
   "name": "second-brain",
   "version": "1.1.0",
-  "description": "Universal offline-first AI agent second brain — Obsidian vault + knowledge graph + agent memory API",
+  "description": "Local-first agent memory service with an Obsidian-compatible graph and recall API",
   "type": "module",
   "scripts": {
     "start":  "node api/server.js",
     "dev":    "node --watch api/server.js",
-    "ui":     "start ui/index.html",
+    "ui":     "node sdk/open_ui.js",
     "brain":  "node sdk/cli.js",
     "mcp":    "node mcp/server.js",
     "test":   "node --test test/*.test.js"

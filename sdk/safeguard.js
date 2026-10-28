@@ -2,8 +2,8 @@
  * ══════════════════════════════════════════════════════════════
  *  SECOND BRAIN — PII & Secrets Safeguard Utility
  *
- *  Regex-based sanitization of prompts, RAG context, sandbox
- *  commands, stdout, stderr, and any other text before it gets
+ *  Regex-based sanitization of prompts, RAG context, stdout, stderr,
+ *  and any other text before it gets
  *  logged, stored, or echoed back — so an accidentally pasted key
  *  or personal identifier never ends up committed to the vault.
  * ══════════════════════════════════════════════════════════════

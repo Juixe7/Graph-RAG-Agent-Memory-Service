@@ -90,7 +90,7 @@ export class SecondBrain {
    * relevant nodes with their linked neighbors. Returns a ready-to-use
    * systemPrompt string to inject into your AI call.
    *
-   * Token cost: ~300–2000 tokens (vs ~50,000 for reading source files)
+   * The returned tokenEstimate is approximate and capped by maxTokens.
    *
    * @param {string} query     — What you need to know
    * @param {number} hops      — How many wikilink levels to follow (0–3)
@@ -244,7 +244,7 @@ export class SecondBrain {
    *
    * Example:
    *   const systemPrompt = await brain.smartPrompt('write product ebook', MY_SYSTEM_PROMPT);
-   *   // Now systemPrompt has ~500 tokens of relevant context + your prompt
+   *   // The prompt includes the recalled context followed by your base prompt.
    */
   async smartPrompt(topic, basePrompt = '', hops = 1) {
     const ctx = await this.recall(topic, hops, 1500);
