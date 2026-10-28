@@ -3,12 +3,29 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 
 // embeddings.js resolves its cache path from BRAIN_VAULT at import time, so
 // point it at a scratch directory before the (dynamic) import runs.
 const tmpVault = fs.mkdtempSync(path.join(os.tmpdir(), 'second-brain-embeddings-test-'));
 process.env.BRAIN_VAULT = tmpVault;
+const oldDb = new DatabaseSync(path.join(tmpVault, '.embeddings.db'));
+oldDb.exec(`CREATE TABLE embeddings (
+  node_id TEXT PRIMARY KEY,
+  hash TEXT NOT NULL,
+  vector BLOB NOT NULL,
+  updated_at TEXT NOT NULL
+)`);
+oldDb.prepare('INSERT INTO embeddings (node_id, hash, vector, updated_at) VALUES (?, ?, ?, ?)')
+  .run('legacy', 'old-hash', Buffer.from(Float32Array.from([1, 0, 0]).buffer), '2026-01-01T00:00:00.000Z');
+oldDb.close();
 const { updateNodeEmbedding, batchUpdateNodeEmbeddings, getEmbeddingsCache, getEmbedding, meanPoolAndNormalize } = await import('../sdk/embeddings.js');
+
+test('migrates old embedding caches and marks model provenance unknown', () => {
+  const cache = getEmbeddingsCache();
+  assert.equal(cache.legacy.model, '');
+  assert.deepEqual(cache.legacy.vector, [1, 0, 0]);
+});
 
 function fakeVectorResponse(seed) {
   return { data: [{ embedding: [seed, seed + 1, seed + 2] }] };
@@ -36,6 +53,7 @@ test('batchUpdateNodeEmbeddings stores every vector correctly, one embedding req
 
   const cache = getEmbeddingsCache();
   assert.ok(cache.a && cache.b && cache.c);
+  assert.match(cache.a.model, /^openai:/);
   assert.deepEqual(cache.a.vector, [1, 2, 3]);
   assert.deepEqual(cache.b.vector, [2, 3, 4]);
   assert.deepEqual(cache.c.vector, [3, 4, 5]);
@@ -78,6 +96,26 @@ test('updateNodeEmbedding skips the API call when content is unchanged (hash mat
 
   assert.deepEqual(v1, v2);
   assert.equal(fetchCalls, 1, 'second call reuses the cached vector instead of calling the API again');
+});
+
+test('updateNodeEmbedding refreshes a vector when the embedding model changes', async (t) => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async url => {
+    calls++;
+    if (String(url).includes('generativelanguage.googleapis.com')) {
+      return { json: async () => ({ embedding: { values: [0.1, 0.2, 0.3] } }) };
+    }
+    return { json: async () => fakeVectorResponse(1) };
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await updateNodeEmbedding('model-switch', 'Title', 'stable content', { openaiKey: 'openai-test' });
+  const geminiVector = await updateNodeEmbedding('model-switch', 'Title', 'stable content', { geminiKey: 'gemini-test' });
+
+  assert.deepEqual(geminiVector, [0.1, 0.2, 0.3]);
+  assert.equal(getEmbeddingsCache()['model-switch'].model, 'gemini:gemini-embedding-001');
+  assert.equal(calls, 2, 'the second provider must produce a fresh model-compatible vector');
 });
 
 // ── Local embedding fallback (@huggingface/transformers is optional) ────────

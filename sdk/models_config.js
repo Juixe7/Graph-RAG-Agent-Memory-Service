@@ -63,6 +63,9 @@ export function resolveKeys(params = {}) {
     // project's .env value here and get sent to OPENAI_API_BASE if that's
     // pointed at OpenRouter — producing a confusing auth failure.
     openaiKey:    params.openaiKey    || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '',
+    // Chat-compatible gateways such as OpenRouter do not necessarily expose
+    // OpenAI's embedding endpoint; keep embedding credentials separate.
+    embeddingOpenaiKey: params.embeddingOpenaiKey || params.openaiKey || process.env.OPENAI_API_KEY || '',
     geminiKey:    params.geminiKey    || process.env.GEMINI_API_KEY    || '',
     nvidiaKey:    params.nvidiaKey    || process.env.NVIDIA_API_KEY    || '',
     ollamaHost:   params.ollamaHost   || MODELS.ollama.host,

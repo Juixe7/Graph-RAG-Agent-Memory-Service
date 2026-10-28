@@ -35,10 +35,41 @@ function getDb() {
       node_id    TEXT PRIMARY KEY,
       hash       TEXT NOT NULL,
       vector     BLOB NOT NULL,
+      model      TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL
     )
   `);
+  const columns = db.prepare('PRAGMA table_info(embeddings)').all();
+  if (!columns.some(column => column.name === 'model')) {
+    // Existing caches predate model tracking. Mark them unknown; they will be
+    // ignored by semantic ranking and regenerated on the next reindex.
+    db.exec("ALTER TABLE embeddings ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+  }
   return db;
+}
+
+const LOCAL_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
+
+export function getEmbeddingModelId(provider) {
+  if (provider === 'openai') {
+    return `openai:${MODELS.openai.embeddingApiBase}:${MODELS.openai.embeddingModel}`;
+  }
+  if (provider === 'gemini') return `gemini:${MODELS.gemini.embeddingModel}`;
+  if (provider === 'local') return `local:${LOCAL_EMBEDDING_MODEL}`;
+  throw new Error(`Unknown embedding provider: ${provider}`);
+}
+
+export function getPreferredEmbeddingModelId(keys = {}) {
+  const openaiKey = getOpenAIEmbeddingKey(keys);
+  const geminiKey = keys.geminiKey || process.env.GEMINI_API_KEY || '';
+  if (openaiKey) return getEmbeddingModelId('openai');
+  if (geminiKey) return getEmbeddingModelId('gemini');
+  return getEmbeddingModelId('local');
+}
+
+function getOpenAIEmbeddingKey(keys = {}) {
+  if (Object.hasOwn(keys, 'embeddingOpenaiKey')) return keys.embeddingOpenaiKey || '';
+  return keys.openaiKey || process.env.OPENAI_API_KEY || '';
 }
 
 // Vectors round-trip as float32 (a Buffer view over a Float32Array), not
@@ -124,7 +155,7 @@ async function getLocalPipeline() {
   if (!localPipelinePromise) {
     localPipelinePromise = (async () => {
       const { pipeline } = await import('@huggingface/transformers');
-      return pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      return pipeline('feature-extraction', LOCAL_EMBEDDING_MODEL);
     })();
   }
   return localPipelinePromise;
@@ -154,20 +185,20 @@ async function callLocalEmbedding(text) {
 // providers as the default preserves consistency with whatever's already
 // cached; local only kicks in as a last-resort safety net so search never
 // goes fully dark just because a cloud key is missing or exhausted.
-export async function getEmbedding(text, keys = {}) {
-  const openaiKey = keys.openaiKey || process.env.OPENAI_API_KEY || '';
+export async function getEmbeddingResult(text, keys = {}) {
+  const openaiKey = getOpenAIEmbeddingKey(keys);
   const geminiKey = keys.geminiKey || process.env.GEMINI_API_KEY || '';
 
   const errors = [];
   if (openaiKey) {
-    try { return await callOpenAIEmbedding(openaiKey, text); }
+    try { return { vector: await callOpenAIEmbedding(openaiKey, text), model: getEmbeddingModelId('openai') }; }
     catch (err) { errors.push(`openai: ${err.message}`); }
   }
   if (geminiKey) {
-    try { return await callGeminiEmbedding(geminiKey, text); }
+    try { return { vector: await callGeminiEmbedding(geminiKey, text), model: getEmbeddingModelId('gemini') }; }
     catch (err) { errors.push(`gemini: ${err.message}`); }
   }
-  try { return await callLocalEmbedding(text); }
+  try { return { vector: await callLocalEmbedding(text), model: getEmbeddingModelId('local') }; }
   catch (err) { errors.push(`local: ${err.message}`); }
 
   // Local is always attempted regardless of whether a cloud key exists (it's
@@ -179,20 +210,24 @@ export async function getEmbedding(text, keys = {}) {
   throw new Error(errors.join(' | '));
 }
 
+export async function getEmbedding(text, keys = {}) {
+  return (await getEmbeddingResult(text, keys)).vector;
+}
+
 // ── Single-row operations ────────────────────────────────────────────────────
 // The efficient path: a direct indexed lookup/write for one node, instead of
 // reading or rewriting every node's vector just to touch one.
 function getVectorEntry(nodeId) {
-  const row = getDb().prepare('SELECT hash, vector, updated_at FROM embeddings WHERE node_id = ?').get(nodeId);
+  const row = getDb().prepare('SELECT hash, vector, model, updated_at FROM embeddings WHERE node_id = ?').get(nodeId);
   if (!row) return null;
-  return { hash: row.hash, vector: decodeVector(row.vector), updatedAt: row.updated_at };
+  return { hash: row.hash, vector: decodeVector(row.vector), model: row.model || '', updatedAt: row.updated_at };
 }
 
-function upsertVectorEntry(nodeId, hash, vector, updatedAt = new Date().toISOString(), database = getDb()) {
+function upsertVectorEntry(nodeId, hash, vector, model = '', updatedAt = new Date().toISOString(), database = getDb()) {
   database.prepare(`
-    INSERT INTO embeddings (node_id, hash, vector, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(node_id) DO UPDATE SET hash = excluded.hash, vector = excluded.vector, updated_at = excluded.updated_at
-  `).run(nodeId, hash, encodeVector(vector), updatedAt);
+    INSERT INTO embeddings (node_id, hash, vector, model, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(node_id) DO UPDATE SET hash = excluded.hash, vector = excluded.vector, model = excluded.model, updated_at = excluded.updated_at
+  `).run(nodeId, hash, encodeVector(vector), model, updatedAt);
 }
 
 // ── Cache operations ─────────────────────────────────────────────────────────
@@ -204,10 +239,10 @@ function upsertVectorEntry(nodeId, hash, vector, updatedAt = new Date().toISOStr
 // instead of paying for a full scan.
 export function getEmbeddingsCache() {
   try {
-    const rows = getDb().prepare('SELECT node_id, hash, vector, updated_at FROM embeddings').all();
+    const rows = getDb().prepare('SELECT node_id, hash, vector, model, updated_at FROM embeddings').all();
     const cache = {};
     for (const row of rows) {
-      cache[row.node_id] = { hash: row.hash, vector: decodeVector(row.vector), updatedAt: row.updated_at };
+      cache[row.node_id] = { hash: row.hash, vector: decodeVector(row.vector), model: row.model || '', updatedAt: row.updated_at };
     }
     return cache;
   } catch (e) {
@@ -223,7 +258,7 @@ export function saveEmbeddingsCache(cache) {
     try {
       for (const [nodeId, entry] of Object.entries(cache)) {
         if (!entry || !Array.isArray(entry.vector)) continue;
-        upsertVectorEntry(nodeId, entry.hash, entry.vector, entry.updatedAt || new Date().toISOString(), database);
+        upsertVectorEntry(nodeId, entry.hash, entry.vector, entry.model || '', entry.updatedAt || new Date().toISOString(), database);
       }
       database.exec('COMMIT');
     } catch (e) {
@@ -250,16 +285,18 @@ export function getHash(text) {
 export async function updateNodeEmbedding(nodeId, title, content, keys = {}, sharedCache = null) {
   const text = `${title}\n\n${content}`;
   const hash = getHash(text);
+  const preferredModel = getPreferredEmbeddingModelId(keys);
 
   if (sharedCache) {
     // Batch path: caller flushes the whole in-memory cache once at the end.
-    if (sharedCache[nodeId] && sharedCache[nodeId].hash === hash && Array.isArray(sharedCache[nodeId].vector)) {
+    if (sharedCache[nodeId] && sharedCache[nodeId].hash === hash &&
+        sharedCache[nodeId].model === preferredModel && Array.isArray(sharedCache[nodeId].vector)) {
       return sharedCache[nodeId].vector;
     }
     try {
-      const vector = await getEmbedding(text, keys);
-      sharedCache[nodeId] = { hash, vector, updatedAt: new Date().toISOString() };
-      return vector;
+      const result = await getEmbeddingResult(text, keys);
+      sharedCache[nodeId] = { hash, vector: result.vector, model: result.model, updatedAt: new Date().toISOString() };
+      return result.vector;
     } catch (err) {
       console.warn(`[embeddings] Failed to update vector for "${title}": ${err.message}`);
       return null;
@@ -270,13 +307,13 @@ export async function updateNodeEmbedding(nodeId, title, content, keys = {}, sha
   // indexed row read, not a full-cache load.
   try {
     const existing = getVectorEntry(nodeId);
-    if (existing && existing.hash === hash) return existing.vector;
+    if (existing && existing.hash === hash && existing.model === preferredModel) return existing.vector;
   } catch { /* fall through and try to (re)compute */ }
 
   try {
-    const vector = await getEmbedding(text, keys);
-    upsertVectorEntry(nodeId, hash, vector);
-    return vector;
+    const result = await getEmbeddingResult(text, keys);
+    upsertVectorEntry(nodeId, hash, result.vector, result.model);
+    return result.vector;
   } catch (err) {
     // Silent fail/warning to avoid blocking normal node writes when offline
     // or when no embedding provider is configured at all.

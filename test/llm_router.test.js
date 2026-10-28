@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractJSON, routeLLM, activeProvider } from '../sdk/llm_router.js';
+import { resolveKeys } from '../sdk/models_config.js';
 
 // ── extractJSON ────────────────────────────────────────────────────────────
 
@@ -33,6 +34,23 @@ test('extractJSON repairs raw newlines/tabs left unescaped inside a string value
 test('extractJSON repair does not touch an escaped quote inside a string', () => {
   const text = '{"action":"respond","message":"She said \\"hi\\"\nthen left."}';
   assert.deepEqual(extractJSON(text), { action: 'respond', message: 'She said "hi"\nthen left.' });
+});
+
+test('OpenRouter chat credentials are not reused for OpenAI embeddings', () => {
+  const savedOpenRouter = process.env.OPENROUTER_API_KEY;
+  const savedOpenAI = process.env.OPENAI_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'router-test-key';
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const keys = resolveKeys();
+    assert.equal(keys.openaiKey, 'router-test-key');
+    assert.equal(keys.embeddingOpenaiKey, '');
+  } finally {
+    if (savedOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = savedOpenRouter;
+    if (savedOpenAI === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedOpenAI;
+  }
 });
 
 // ── routeLLM provider fallthrough ────────────────────────────────────────────
