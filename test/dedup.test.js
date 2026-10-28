@@ -11,7 +11,7 @@ const tmpVault = fs.mkdtempSync(path.join(os.tmpdir(), 'second-brain-dedup-test-
 process.env.BRAIN_VAULT = tmpVault;
 
 const { findMostSimilarNode, judgeDuplicate, DEDUP_SIMILARITY_THRESHOLD } = await import('../sdk/dedup.js');
-const { saveEmbeddingsCache } = await import('../sdk/embeddings.js');
+const { saveEmbeddingsCache, getHash, getEmbeddingModelId } = await import('../sdk/embeddings.js');
 
 function fakeEmbeddingResponse(vector) {
   return { data: [{ embedding: vector }] };
@@ -24,15 +24,15 @@ test('findMostSimilarNode returns the closest existing node above the threshold'
   globalThis.fetch = async () => ({ json: async () => fakeEmbeddingResponse([1, 0, 0]) });
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  saveEmbeddingsCache({
-    existingClose: { hash: 'h1', vector: [0.999, 0.001, 0], updatedAt: '' },
-    existingFar:   { hash: 'h2', vector: [0, 1, 0], updatedAt: '' },
-  });
-
   const nodes = {
     existingClose: { id: 'existingClose', type: 'memory', agent: 'research-agent', title: 'Close', content: 'x' },
     existingFar:   { id: 'existingFar',   type: 'memory', agent: 'research-agent', title: 'Far',   content: 'y' },
   };
+  const model = getEmbeddingModelId('openai');
+  saveEmbeddingsCache({
+    existingClose: { hash: getHash('Close\n\nx'), model, vector: [0.999, 0.001, 0], updatedAt: '' },
+    existingFar:   { hash: getHash('Far\n\ny'), model, vector: [0, 1, 0], updatedAt: '' },
+  });
   const candidate = { id: 'newNode', type: 'memory', agent: 'research-agent', title: 'New', content: 'z' };
 
   const match = await findMostSimilarNode(nodes, candidate, { openaiKey: 'test-key' });
@@ -46,15 +46,15 @@ test('findMostSimilarNode ignores nodes of a different type or agent', async (t)
   globalThis.fetch = async () => ({ json: async () => fakeEmbeddingResponse([1, 0, 0]) });
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  saveEmbeddingsCache({
-    wrongType:  { hash: 'h1', vector: [1, 0, 0], updatedAt: '' },
-    wrongAgent: { hash: 'h2', vector: [1, 0, 0], updatedAt: '' },
-  });
-
   const nodes = {
     wrongType:  { id: 'wrongType',  type: 'task',   agent: 'research-agent', title: 'T',  content: 'x' },
     wrongAgent: { id: 'wrongAgent', type: 'memory', agent: 'pipeline-agent', title: 'T2', content: 'y' },
   };
+  const model = getEmbeddingModelId('openai');
+  saveEmbeddingsCache({
+    wrongType:  { hash: getHash('T\n\nx'), model, vector: [1, 0, 0], updatedAt: '' },
+    wrongAgent: { hash: getHash('T2\n\ny'), model, vector: [1, 0, 0], updatedAt: '' },
+  });
   const candidate = { id: 'newNode', type: 'memory', agent: 'research-agent', title: 'New', content: 'z' };
 
   const match = await findMostSimilarNode(nodes, candidate, { openaiKey: 'test-key' });
@@ -66,13 +66,12 @@ test('findMostSimilarNode returns null below the similarity threshold', async (t
   globalThis.fetch = async () => ({ json: async () => fakeEmbeddingResponse([1, 0, 0]) });
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  saveEmbeddingsCache({
-    unrelated: { hash: 'h1', vector: [0, 1, 0], updatedAt: '' },
-  });
-
   const nodes = {
     unrelated: { id: 'unrelated', type: 'memory', agent: 'research-agent', title: 'Unrelated', content: 'x' },
   };
+  saveEmbeddingsCache({
+    unrelated: { hash: getHash('Unrelated\n\nx'), model: getEmbeddingModelId('openai'), vector: [0, 1, 0], updatedAt: '' },
+  });
   const candidate = { id: 'newNode', type: 'memory', agent: 'research-agent', title: 'New', content: 'z' };
 
   const match = await findMostSimilarNode(nodes, candidate, { openaiKey: 'test-key' });

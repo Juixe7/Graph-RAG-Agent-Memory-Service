@@ -10,7 +10,7 @@
 import fs   from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getEmbedding, getEmbeddingsCache } from '../sdk/embeddings.js';
+import { getEmbeddingResult, getEmbeddingsCache, getHash } from '../sdk/embeddings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Same BRAIN_VAULT override sdk/embeddings.js already honors — lets a
@@ -424,16 +424,22 @@ function reciprocalRankFusion(rankedIdLists) {
 async function semanticRankIds(allNodes, query, keys) {
   try {
     const cache = getEmbeddingsCache();
-    const hasVectors = Object.values(cache).some(entry => Array.isArray(entry.vector));
-    if (!hasVectors) return [];
+    const currentEntries = allNodes.filter(node => {
+      const entry = cache[node.id];
+      const text = `${node.title}\n\n${node.content}`;
+      return entry && entry.model && entry.hash === getHash(text) && Array.isArray(entry.vector);
+    });
+    if (!currentEntries.length) return [];
 
-    const queryVector = await getEmbedding(query, keys);
-    if (!queryVector) return [];
+    const queryEmbedding = await getEmbeddingResult(query, keys);
+    if (!queryEmbedding?.vector) return [];
 
-    return allNodes
+    return currentEntries
+      // A semantic rank is meaningful only within the same embedding space.
+      .filter(node => cache[node.id].model === queryEmbedding.model)
       .map(node => {
         const entry = cache[node.id];
-        let sim = entry && Array.isArray(entry.vector) ? cosineSimilarity(queryVector, entry.vector) : 0;
+        const sim = cosineSimilarity(queryEmbedding.vector, entry.vector);
         if (node.title.toLowerCase().includes(query.toLowerCase())) sim += 0.3;
         if (node.title.toLowerCase() === query.toLowerCase()) sim += 0.5;
         return { id: node.id, sim };
@@ -591,6 +597,7 @@ export function archiveStaleNodes(nodes) {
  *   seeding (identical to this function's previous, synchronous behavior).
  */
 export async function buildContext(nodes, query, hops = 1, maxTokens = 2000, keys = {}) {
+  const tokenBudget = Number.isFinite(maxTokens) ? Math.max(0, Math.floor(maxTokens)) : 2000;
   const seeds = await searchNodesWithSemantics(nodes, query, 3, keys);
   if (!seeds.length) return { query, nodes: [], tokenEstimate: 0, systemPrompt: '' };
 
@@ -610,10 +617,13 @@ export async function buildContext(nodes, query, hops = 1, maxTokens = 2000, key
     const node = nodes[id];
     if (!node) continue;
 
-    const est = Math.ceil(node.content.length / 4);
-    if (tokens + est > maxTokens && result.length > 0) break;
-    result.push({ ...node, hop });
-    tokens += est;
+    const candidate = [...result, { ...node, hop }];
+    const candidatePrompt = buildSystemPrompt(candidate);
+    const candidateTokens = estimateTokens(candidatePrompt);
+    if (candidateTokens <= tokenBudget) {
+      result.push({ ...node, hop });
+      tokens = candidateTokens;
+    }
 
     if (hop < hops) {
       for (const link of parseWikiLinks(node.content)) {
@@ -631,6 +641,11 @@ export async function buildContext(nodes, query, hops = 1, maxTokens = 2000, key
     nodes:         result,
     systemPrompt:  buildSystemPrompt(result),
   };
+}
+
+function estimateTokens(text) {
+  // A portable character-based estimate; actual tokenizer counts vary by model.
+  return Math.ceil(text.length / 4);
 }
 
 function buildSystemPrompt(nodes) {

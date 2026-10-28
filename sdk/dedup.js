@@ -17,13 +17,11 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import { getEmbedding, getEmbeddingsCache } from './embeddings.js';
+import { getEmbeddingResult, getEmbeddingsCache, getHash } from './embeddings.js';
 import { routeLLM } from './llm_router.js';
 
-// A high bar (0.97 cosine similarity) suits tightly-templated, LLM-extracted
-// facts. Free-form personal notes vary more in phrasing for the same
-// underlying content, so a slightly lower gate still keeps false merges
-// rare while actually catching near-duplicates in practice.
+// This threshold is configurable by callers and should be calibrated against
+// labeled duplicate/non-duplicate pairs before enabling automatic merges.
 export const DEDUP_SIMILARITY_THRESHOLD = 0.93;
 
 function cosineSimilarity(v1, v2) {
@@ -53,18 +51,19 @@ export async function findMostSimilarNode(nodes, candidate, keys = {}, threshold
 
   let vector;
   try {
-    vector = await getEmbedding(`${candidate.title}\n\n${candidate.content}`, keys);
+    vector = await getEmbeddingResult(`${candidate.title}\n\n${candidate.content}`, keys);
   } catch {
     return null; // no embedding provider configured — dedup opts out silently, same fail-open policy as the rest of the vault
   }
-  if (!vector) return null;
+  if (!vector?.vector) return null;
 
   const cache = getEmbeddingsCache();
   let best = null;
   for (const node of pool) {
     const entry = cache[node.id];
-    if (!entry || !Array.isArray(entry.vector)) continue;
-    const sim = cosineSimilarity(vector, entry.vector);
+    const currentHash = getHash(`${node.title}\n\n${node.content}`);
+    if (!entry || !entry.model || entry.model !== vector.model || entry.hash !== currentHash || !Array.isArray(entry.vector)) continue;
+    const sim = cosineSimilarity(vector.vector, entry.vector);
     if (sim >= threshold && (!best || sim > best.similarity)) {
       best = { node, similarity: sim };
     }
@@ -153,7 +152,7 @@ export async function scanForDuplicates(nodes, opts = {}) {
 
     for (const node of all) {
       const entry = cache[node.id];
-      if (!entry || !Array.isArray(entry.vector)) continue;
+      if (!entry || !entry.model || entry.hash !== getHash(`${node.title}\n\n${node.content}`) || !Array.isArray(entry.vector)) continue;
 
       for (const other of all) {
         if (other.id === node.id) continue;
@@ -164,7 +163,8 @@ export async function scanForDuplicates(nodes, opts = {}) {
         seenPairs.add(pairKey);
 
         const otherEntry = cache[other.id];
-        if (!otherEntry || !Array.isArray(otherEntry.vector)) continue;
+        if (!otherEntry || otherEntry.model !== entry.model ||
+            otherEntry.hash !== getHash(`${other.title}\n\n${other.content}`) || !Array.isArray(otherEntry.vector)) continue;
 
         const similarity = cosineSimilarity(entry.vector, otherEntry.vector);
         if (similarity < threshold) continue;
